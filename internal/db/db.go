@@ -71,3 +71,11 @@ type DB interface {
 	// Dialect returns "sqlite" or "postgres".
 	Dialect() string
 }
+
+// Open returns a DB based on the dialect ("sqlite" or "postgres").
+func Open(dialect, sqlitePath, postgresURL string) (DB, error) {
+	if dialect == "postgres" {
+		return NewPostgres(postgresURL)
+	}
+	return NewSqlite(sqlitePath)
+}
