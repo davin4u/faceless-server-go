@@ -30,3 +30,18 @@ type NoopNotifier struct{}
 
 func (NoopNotifier) NotifyContactRequest(string, ContactRequestPayload)   {}
 func (NoopNotifier) NotifyContactAccepted(string, ContactAcceptedPayload) {}
+
+// ConnectionCounts is consumed by the admin /stats handler.
+type ConnectionCounts struct {
+	App     int `json:"app"`
+	Service int `json:"service"`
+}
+
+type ConnectionCounter interface {
+	GetConnectionCounts() ConnectionCounts
+}
+
+// NoopCounter returns zero counts; used in tests.
+type NoopCounter struct{}
+
+func (NoopCounter) GetConnectionCounts() ConnectionCounts { return ConnectionCounts{} }
