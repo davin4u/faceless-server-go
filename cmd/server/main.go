@@ -50,6 +50,8 @@ func main() {
 	conns := socketio.ConnectionCounter(sio)
 
 	r := chi.NewRouter()
+	r.Use(logger.RealIP)
+	r.Use(logger.SecurityHeaders)
 	r.Use(logger.RequestLogger)
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"*"},
