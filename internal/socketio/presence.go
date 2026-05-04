@@ -228,3 +228,27 @@ func (p *Presence) acceptedContactIDs(ctx context.Context, userID string) ([]str
 	}
 	return out, nil
 }
+
+func (p *Presence) appSocketCount(userID string) int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	n := 0
+	for _, e := range p.users[userID] {
+		if e.socketType != "service" {
+			n++
+		}
+	}
+	return n
+}
+
+func (p *Presence) serviceSocketCount(userID string) int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	n := 0
+	for _, e := range p.users[userID] {
+		if e.socketType == "service" {
+			n++
+		}
+	}
+	return n
+}
