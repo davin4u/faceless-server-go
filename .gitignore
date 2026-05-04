@@ -4,4 +4,5 @@
 *.db-wal
 .env
 /faceless-server
+/server
 /dist/
