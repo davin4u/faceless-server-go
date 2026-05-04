@@ -1,0 +1,22 @@
+[Unit]
+Description=Faceless server (Go)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=faceless
+WorkingDirectory=/opt/faceless-go
+EnvironmentFile=/opt/faceless-go/.env
+ExecStart=/opt/faceless-go/faceless-server
+Restart=always
+RestartSec=2s
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
