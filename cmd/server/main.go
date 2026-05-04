@@ -45,8 +45,9 @@ func main() {
 	powSvc := pow.New(cfg.PoWDifficulty)
 	go powSvc.StartGC(rootCtx.Done())
 
-	notifier := socketio.Notifier(socketio.NoopNotifier{})
-	conns := socketio.ConnectionCounter(socketio.NoopCounter{})
+	sio := socketio.New(d, cfg.LogICE)
+	notifier := socketio.Notifier(sio)
+	conns := socketio.ConnectionCounter(sio)
 
 	r := chi.NewRouter()
 	r.Use(logger.RequestLogger)
@@ -73,6 +74,8 @@ func main() {
 
 	// Health (unlimited)
 	r.Get("/health", routes.NewHealth().ServeHTTP)
+
+	r.Mount("/socket.io/", sio.Handler())
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	srv := &http.Server{Addr: addr, Handler: r, ReadHeaderTimeout: 5 * time.Second}
