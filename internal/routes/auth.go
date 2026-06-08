@@ -3,6 +3,7 @@ package routes
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -41,6 +42,11 @@ func powChallenge(p *pow.Service) http.HandlerFunc {
 		writeJSON(w, 200, c)
 	}
 }
+
+// errInviteInvalid signals that the supplied invitation code does not exist or
+// has no remaining uses. Returned from the register transaction to roll it back
+// (so a failed registration never burns an invite) and respond with a 400.
+var errInviteInvalid = errors.New("invalid or exhausted invitation code")
 
 func register(d db.DB, p *pow.Service) http.HandlerFunc {
 	type req struct {
@@ -108,27 +114,35 @@ func register(d db.DB, p *pow.Service) http.HandlerFunc {
 			return
 		}
 
-		// Atomically consume one invite use (race-safe: guarded by > 0).
-		consumed, err := d.Run(ctx,
-			`UPDATE users SET invitation_code_usages = invitation_code_usages - 1
-			 WHERE invitation_code = ? AND invitation_code_usages > 0`, invite)
-		if err != nil {
-			writeJSONErr(w, 500, "DB error")
-			return
-		}
-		if consumed.Changes == 0 {
+		// Consume one invite use and insert the new user atomically. The guarded
+		// UPDATE (invitation_code_usages > 0) makes the decrement race-safe; doing
+		// it in the same transaction as the INSERT means a failed insert — or an
+		// invalid/exhausted code — rolls the whole thing back, so a failed
+		// registration can never burn an invite use.
+		txErr := d.Tx(ctx, func(tx db.Tx) error {
+			consumed, err := tx.Run(ctx,
+				`UPDATE users SET invitation_code_usages = invitation_code_usages - 1
+				 WHERE invitation_code = ? AND invitation_code_usages > 0`, invite)
+			if err != nil {
+				return err
+			}
+			if consumed.Changes == 0 {
+				return errInviteInvalid
+			}
+			if _, err := tx.Run(ctx,
+				`INSERT INTO users (id, contact_code, display_name, public_key, chat_public_key, invitation_code, invitation_code_usages)
+				 VALUES (?, ?, ?, ?, ?, ?, 3)`,
+				id, code, dn, b.PublicKey, b.ChatPublicKey, ownInvite,
+			); err != nil {
+				return err
+			}
+			return nil
+		})
+		if errors.Is(txErr, errInviteInvalid) {
 			writeJSONErr(w, 400, "Invalid or exhausted invitation code")
 			return
 		}
-
-		if _, err := d.Run(ctx,
-			`INSERT INTO users (id, contact_code, display_name, public_key, chat_public_key, invitation_code, invitation_code_usages)
-			 VALUES (?, ?, ?, ?, ?, ?, 3)`,
-			id, code, dn, b.PublicKey, b.ChatPublicKey, ownInvite,
-		); err != nil {
-			// Roll back the consumed invite so a failed insert does not burn it.
-			_, _ = d.Run(ctx,
-				`UPDATE users SET invitation_code_usages = invitation_code_usages + 1 WHERE invitation_code = ?`, invite)
+		if txErr != nil {
 			writeJSONErr(w, 500, "DB error")
 			return
 		}

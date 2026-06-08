@@ -30,7 +30,7 @@ func Load() Config {
 		DBType:        getStr("DB_TYPE", "sqlite"),
 		DBPath:        getStr("DB_PATH", "./data/messenger.db"),
 		DatabaseURL:   getStr("DATABASE_URL", ""),
-		PoWDifficulty: getInt("POW_DIFFICULTY", 20),
+		PoWDifficulty: getInt("POW_DIFFICULTY", 14),
 		AdminSecret:   getStr("ADMIN_SECRET", ""),
 		LogLevel:      getStr("LOG_LEVEL", "info"),
 		LogFormat:     getStr("LOG_FORMAT", "json"),

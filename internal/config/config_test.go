@@ -26,8 +26,8 @@ func TestLoad_Defaults(t *testing.T) {
 	if c.DBPath != "./data/messenger.db" {
 		t.Errorf("DBPath = %q", c.DBPath)
 	}
-	if c.PoWDifficulty != 20 {
-		t.Errorf("PoWDifficulty = %d, want 20", c.PoWDifficulty)
+	if c.PoWDifficulty != 14 {
+		t.Errorf("PoWDifficulty = %d, want 14", c.PoWDifficulty)
 	}
 	if c.AdminSecret != "" {
 		t.Errorf("AdminSecret should default to empty")
