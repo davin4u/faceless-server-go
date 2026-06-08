@@ -1,6 +1,10 @@
 package db
 
-import "context"
+import (
+	"context"
+	"crypto/rand"
+	"errors"
+)
 
 // runSqliteMigrations applies SQLite-only schema fixups. Idempotent.
 //
@@ -62,6 +66,41 @@ func runSqliteMigrations(ctx context.Context, d DB) error {
 			}
 		}
 	}
+	// Migration: add invitation_code + invitation_code_usages, then backfill.
+	hasInvite, err := sqliteHasColumn(ctx, d, "users", "invitation_code")
+	if err != nil {
+		return err
+	}
+	if !hasInvite {
+		if err := d.Exec(ctx, `ALTER TABLE users ADD COLUMN invitation_code TEXT`); err != nil {
+			return err
+		}
+	}
+	hasUsages, err := sqliteHasColumn(ctx, d, "users", "invitation_code_usages")
+	if err != nil {
+		return err
+	}
+	if !hasUsages {
+		if err := d.Exec(ctx, `ALTER TABLE users ADD COLUMN invitation_code_usages INTEGER NOT NULL DEFAULT 3`); err != nil {
+			return err
+		}
+	}
+	missing, err := d.All(ctx, `SELECT id FROM users WHERE invitation_code IS NULL`)
+	if err != nil {
+		return err
+	}
+	for _, r := range missing {
+		code, err := backfillInviteCode(ctx, d)
+		if err != nil {
+			return err
+		}
+		if _, err := d.Run(ctx,
+			`UPDATE users SET invitation_code = ?, invitation_code_usages = 3 WHERE id = ?`,
+			code, r.Str("id")); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
@@ -89,4 +128,28 @@ func sqliteColumnIsNotNull(ctx context.Context, d DB, table, col string) (bool, 
 		}
 	}
 	return false, nil
+}
+
+const inviteCharset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+func backfillInviteCode(ctx context.Context, d DB) (string, error) {
+	for attempt := 0; attempt < 10; attempt++ {
+		var b [8]byte
+		if _, err := rand.Read(b[:]); err != nil {
+			return "", err
+		}
+		var raw [8]byte
+		for i := 0; i < 8; i++ {
+			raw[i] = inviteCharset[int(b[i])%len(inviteCharset)]
+		}
+		code := string(raw[:4]) + "-" + string(raw[4:])
+		row, err := d.Get(ctx, `SELECT 1 FROM users WHERE invitation_code = ?`, code)
+		if err != nil {
+			return "", err
+		}
+		if row == nil {
+			return code, nil
+		}
+	}
+	return "", errors.New("failed to generate unique invitation code during backfill")
 }

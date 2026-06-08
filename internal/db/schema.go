@@ -36,6 +36,8 @@ CREATE TABLE IF NOT EXISTS users (
   display_name TEXT NOT NULL,
   public_key TEXT NOT NULL,
   chat_public_key TEXT,
+  invitation_code TEXT,
+  invitation_code_usages INTEGER NOT NULL DEFAULT 3,
   username TEXT,
   password_hash TEXT,
   created_at INTEGER NOT NULL DEFAULT (` + now + `)
@@ -96,6 +98,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_key ON users(public_key);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_chat_public_key ON users(chat_public_key);
 CREATE INDEX IF NOT EXISTS idx_messages_receiver_delivered ON messages(receiver_id, delivered);
 CREATE INDEX IF NOT EXISTS idx_pending_events_user ON pending_events(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invitation_code ON users(invitation_code);
 `
 }
 

@@ -66,6 +66,7 @@ func main() {
 	r.With(httprate.LimitByIP(5, time.Minute)).Post("/api/register", authMux.ServeHTTP)
 	r.With(httprate.LimitByIP(10, time.Minute)).Post("/api/recover", authMux.ServeHTTP)
 	r.With(httprate.LimitByIP(20, time.Minute)).Post("/api/generate-name", authMux.ServeHTTP)
+	r.With(httprate.LimitByIP(10, time.Minute)).Post("/api/invite/validate", authMux.ServeHTTP)
 
 	// Authenticated contacts (mounted under /api/contacts)
 	contactsMux := routes.NewContacts(d, notifier)

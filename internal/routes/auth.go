@@ -23,6 +23,7 @@ func NewAuth(d db.DB, p *pow.Service) http.Handler {
 	r.Post("/api/register", register(d, p))
 	r.Post("/api/recover", recover_(d))
 	r.Post("/api/generate-name", generateName(d))
+	r.Post("/api/invite/validate", inviteValidate(d))
 	return r
 }
 
@@ -43,11 +44,12 @@ func powChallenge(p *pow.Service) http.HandlerFunc {
 
 func register(d db.DB, p *pow.Service) http.HandlerFunc {
 	type req struct {
-		Challenge     string `json:"challenge"`
-		Nonce         *int   `json:"nonce"`
-		PublicKey     string `json:"publicKey"`
-		ChatPublicKey string `json:"chatPublicKey"`
-		DisplayName   string `json:"displayName"`
+		Challenge      string `json:"challenge"`
+		Nonce          *int   `json:"nonce"`
+		PublicKey      string `json:"publicKey"`
+		ChatPublicKey  string `json:"chatPublicKey"`
+		DisplayName    string `json:"displayName"`
+		InvitationCode string `json:"invitationCode"`
 	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		var b req
@@ -76,6 +78,11 @@ func register(d db.DB, p *pow.Service) http.HandlerFunc {
 			writeJSONErr(w, 400, "Display name must be 1-50 characters")
 			return
 		}
+		invite := strings.ToUpper(strings.TrimSpace(b.InvitationCode))
+		if invite == "" {
+			writeJSONErr(w, 400, "Invitation code is required")
+			return
+		}
 		if !p.Verify(b.Challenge, *b.Nonce) {
 			writeJSONErr(w, 400, "Invalid proof of work")
 			return
@@ -95,23 +102,49 @@ func register(d db.DB, p *pow.Service) http.HandlerFunc {
 			writeJSONErr(w, 500, "Failed to allocate contact code")
 			return
 		}
-		if _, err := d.Run(ctx,
-			`INSERT INTO users (id, contact_code, display_name, public_key, chat_public_key) VALUES (?, ?, ?, ?, ?)`,
-			id, code, dn, b.PublicKey, b.ChatPublicKey,
-		); err != nil {
+		ownInvite, err := contactcode.GenerateInvitation(ctx, d)
+		if err != nil {
+			writeJSONErr(w, 500, "Failed to allocate invitation code")
+			return
+		}
+
+		// Atomically consume one invite use (race-safe: guarded by > 0).
+		consumed, err := d.Run(ctx,
+			`UPDATE users SET invitation_code_usages = invitation_code_usages - 1
+			 WHERE invitation_code = ? AND invitation_code_usages > 0`, invite)
+		if err != nil {
 			writeJSONErr(w, 500, "DB error")
 			return
 		}
+		if consumed.Changes == 0 {
+			writeJSONErr(w, 400, "Invalid or exhausted invitation code")
+			return
+		}
+
+		if _, err := d.Run(ctx,
+			`INSERT INTO users (id, contact_code, display_name, public_key, chat_public_key, invitation_code, invitation_code_usages)
+			 VALUES (?, ?, ?, ?, ?, ?, 3)`,
+			id, code, dn, b.PublicKey, b.ChatPublicKey, ownInvite,
+		); err != nil {
+			// Roll back the consumed invite so a failed insert does not burn it.
+			_, _ = d.Run(ctx,
+				`UPDATE users SET invitation_code_usages = invitation_code_usages + 1 WHERE invitation_code = ?`, invite)
+			writeJSONErr(w, 500, "DB error")
+			return
+		}
+
 		// Fire-and-forget stats
 		go func() {
 			if err := stats.IncrementDaily(ctx, d, stats.ColRegistrations, 1); err != nil {
 				slog.Error("stats.registrations.error", "err", err)
 			}
 		}()
-		writeJSON(w, 201, map[string]string{
-			"id":          id,
-			"contactCode": code,
-			"displayName": dn,
+		writeJSON(w, 201, map[string]any{
+			"id":                   id,
+			"contactCode":          code,
+			"displayName":          dn,
+			"invitationCode":       ownInvite,
+			"invitationCodeUsages": 3,
 		})
 	}
 }
@@ -128,7 +161,7 @@ func recover_(d db.DB) http.HandlerFunc {
 		}
 		ctx := r.Context()
 		row, _ := d.Get(ctx,
-			`SELECT id, contact_code, display_name, public_key, chat_public_key FROM users WHERE public_key = ?`,
+			`SELECT id, contact_code, display_name, public_key, chat_public_key, invitation_code, invitation_code_usages FROM users WHERE public_key = ?`,
 			b.PublicKey)
 		if row == nil {
 			writeJSONErr(w, 404, "Identity not found")
@@ -144,12 +177,14 @@ func recover_(d db.DB) http.HandlerFunc {
 		`, uid, uid, uid)
 
 		out := map[string]any{
-			"id":            uid,
-			"contactCode":   row.Str("contact_code"),
-			"displayName":   row.Str("display_name"),
-			"publicKey":     row.Str("public_key"),
-			"chatPublicKey": row.Str("chat_public_key"),
-			"contacts":      mapContactRows(contacts),
+			"id":                   uid,
+			"contactCode":          row.Str("contact_code"),
+			"displayName":          row.Str("display_name"),
+			"publicKey":            row.Str("public_key"),
+			"chatPublicKey":        row.Str("chat_public_key"),
+			"invitationCode":       row.Str("invitation_code"),
+			"invitationCodeUsages": row.Int("invitation_code_usages"),
+			"contacts":             mapContactRows(contacts),
 		}
 		writeJSON(w, 200, out)
 	}
@@ -163,6 +198,27 @@ func generateName(d db.DB) http.HandlerFunc {
 			return
 		}
 		writeJSON(w, 200, map[string]string{"name": n})
+	}
+}
+
+func inviteValidate(d db.DB) http.HandlerFunc {
+	type req struct {
+		InvitationCode string `json:"invitationCode"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		var b req
+		if err := json.NewDecoder(r.Body).Decode(&b); err != nil {
+			writeJSON(w, 200, map[string]bool{"valid": false})
+			return
+		}
+		code := strings.ToUpper(strings.TrimSpace(b.InvitationCode))
+		if code == "" {
+			writeJSON(w, 200, map[string]bool{"valid": false})
+			return
+		}
+		row, _ := d.Get(r.Context(),
+			`SELECT 1 FROM users WHERE invitation_code = ? AND invitation_code_usages > 0`, code)
+		writeJSON(w, 200, map[string]bool{"valid": row != nil})
 	}
 }
 

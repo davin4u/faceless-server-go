@@ -5,6 +5,33 @@ import (
 	"testing"
 )
 
+func TestBackfillInvitationCodes(t *testing.T) {
+	ctx := context.Background()
+	d := newSqlite(t)
+	if err := InitSchema(ctx, d); err != nil {
+		t.Fatalf("InitSchema: %v", err)
+	}
+	// Simulate a legacy row whose invitation_code was never set.
+	if _, err := d.Run(ctx,
+		`INSERT INTO users (id, contact_code, display_name, public_key, invitation_code) VALUES ('legacy','BBBB-3333','Old','pkold',NULL)`); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Re-run schema/migrations — backfill should assign a code + 3 usages.
+	if err := InitSchema(ctx, d); err != nil {
+		t.Fatalf("InitSchema rerun: %v", err)
+	}
+	row, err := d.Get(ctx, `SELECT invitation_code, invitation_code_usages FROM users WHERE id='legacy'`)
+	if err != nil || row == nil {
+		t.Fatalf("get legacy: %v row=%v", err, row)
+	}
+	if row.Str("invitation_code") == "" {
+		t.Fatalf("invitation_code not backfilled")
+	}
+	if row.Int("invitation_code_usages") != 3 {
+		t.Fatalf("expected 3 usages, got %d", row.Int("invitation_code_usages"))
+	}
+}
+
 func TestSqliteMigrations_AddsChatPublicKey(t *testing.T) {
 	ctx := context.Background()
 	d := newSqlite(t)

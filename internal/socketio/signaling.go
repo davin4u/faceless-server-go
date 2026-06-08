@@ -2,6 +2,7 @@ package socketio
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"regexp"
 	"sort"
@@ -9,7 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davin4u/faceless-server-go/internal/db"
 	"github.com/davin4u/faceless-server-go/internal/stats"
+	"github.com/google/uuid"
 	socketio "github.com/zishang520/socket.io/v2/socket"
 )
 
@@ -46,6 +49,18 @@ func callKey(a, b string) string {
 	return parts[0] + ":" + parts[1]
 }
 
+// enqueueMissedCall inserts a call:missed pending event for the callee so they
+// see a missed-call entry when they next reconnect (drained by delivery.go).
+func enqueueMissedCall(ctx context.Context, d db.DB, from, to, callType string) error {
+	payload, _ := json.Marshal(map[string]any{
+		"from": from, "callType": callType, "timestamp": time.Now().Unix(),
+	})
+	_, err := d.Run(ctx,
+		`INSERT INTO pending_events (id, user_id, event_type, payload, timestamp) VALUES (?, ?, 'call:missed', ?, ?)`,
+		uuid.NewString(), to, string(payload), time.Now().Unix())
+	return err
+}
+
 func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 	data, _ := socket.Data().(map[string]any)
 	userID, _ := data["user_id"].(string)
@@ -77,6 +92,9 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 		if !s.presence.IsUserOnline(p.To) {
 			slog.Info("signaling.call_offer.unavailable",
 				"from", userID, "to", p.To, "reason", "offline")
+			if err := enqueueMissedCall(ctx, s.d, userID, p.To, p.CallType); err != nil {
+				slog.Error("signaling.missed_call.enqueue_error", "to", p.To, "err", err)
+			}
 			socket.Emit("call:unavailable", map[string]any{})
 			return
 		}
@@ -84,6 +102,9 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 			slog.Info("signaling.call_offer.unavailable",
 				"from", userID, "to", p.To, "reason", "no_app_sockets",
 				"app_sockets", appCount, "service_sockets", serviceCount)
+			if err := enqueueMissedCall(ctx, s.d, userID, p.To, p.CallType); err != nil {
+				slog.Error("signaling.missed_call.enqueue_error", "to", p.To, "err", err)
+			}
 			socket.Emit("call:unavailable", map[string]any{})
 			return
 		}
