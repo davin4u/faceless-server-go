@@ -89,24 +89,24 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 		appCount := s.presence.appSocketCount(p.To)
 		serviceCount := s.presence.serviceSocketCount(p.To)
 
-		if !s.presence.IsUserOnline(p.To) {
-			slog.Info("signaling.call_offer.unavailable",
-				"from", userID, "to", p.To, "reason", "offline")
-			if err := enqueueMissedCall(ctx, s.d, userID, p.To, p.CallType); err != nil {
-				slog.Error("signaling.missed_call.enqueue_error", "to", p.To, "err", err)
-			}
-			socket.Emit("call:unavailable", map[string]any{})
-			return
-		}
+		// Callee has no foreground app socket (fully offline, or only a background
+		// service socket). Wake them via FCM and hold the caller ringing until an
+		// app socket appears, bounded by the call-timeout window.
 		if !s.presence.HasAppSocket(p.To) {
-			slog.Info("signaling.call_offer.unavailable",
-				"from", userID, "to", p.To, "reason", "no_app_sockets",
-				"app_sockets", appCount, "service_sockets", serviceCount)
-			if err := enqueueMissedCall(ctx, s.d, userID, p.To, p.CallType); err != nil {
-				slog.Error("signaling.missed_call.enqueue_error", "to", p.To, "err", err)
+			slog.Info("signaling.call_offer.waking",
+				"from", userID, "to", p.To, "app_sockets", appCount, "service_sockets", serviceCount)
+			go s.push.SendCallWake(context.Background(), p.To, userID, p.CallType)
+			if !s.presence.WaitForAppSocket(ctx, p.To, 25*time.Second) {
+				slog.Info("signaling.call_offer.unavailable",
+					"from", userID, "to", p.To, "reason", "wake_timeout")
+				if err := enqueueMissedCall(ctx, s.d, userID, p.To, p.CallType); err != nil {
+					slog.Error("signaling.missed_call.enqueue_error", "to", p.To, "err", err)
+				}
+				socket.Emit("call:unavailable", map[string]any{})
+				return
 			}
-			socket.Emit("call:unavailable", map[string]any{})
-			return
+			slog.Info("signaling.call_offer.woke", "from", userID, "to", p.To)
+			// fall through: the callee now has an app socket; forward the offer below.
 		}
 
 		// Look up caller display name
