@@ -19,6 +19,7 @@ type Config struct {
 	LogLevel      string
 	LogFormat     string
 	LogICE        bool
+	FCMCredentials string // path to Firebase service-account JSON; empty = push disabled
 }
 
 // Load reads .env (if present) then environment variables and returns Config.
@@ -35,6 +36,7 @@ func Load() Config {
 		LogLevel:      getStr("LOG_LEVEL", "info"),
 		LogFormat:     getStr("LOG_FORMAT", "json"),
 		LogICE:        strings.EqualFold(getStr("LOG_ICE", "false"), "true"),
+		FCMCredentials: getStr("FCM_CREDENTIALS", ""),
 	}
 }
 
