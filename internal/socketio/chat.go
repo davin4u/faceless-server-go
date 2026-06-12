@@ -78,6 +78,12 @@ func (s *Server) registerChatHandlers(socket *socketio.Socket) {
 			"id": p.ID, "from": userID, "ciphertext": p.Ciphertext,
 			"nonce": p.Nonce, "timestamp": ts,
 		})
+
+		// Recipient has no foreground app socket → wake them via FCM. No-op
+		// if the user has no tokens (persistent-mode) or FCM is unconfigured.
+		if !s.presence.HasAppSocket(p.To) {
+			go s.push.SendMessageWake(context.Background(), p.To, userID)
+		}
 	})
 
 	socket.On("message:ack", func(args ...any) {
