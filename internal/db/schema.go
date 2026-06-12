@@ -74,6 +74,15 @@ CREATE TABLE IF NOT EXISTS pending_events (
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
+CREATE TABLE IF NOT EXISTS device_tokens (
+  token TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+
 CREATE TABLE IF NOT EXISTS retired_codes (
   code TEXT PRIMARY KEY,
   retired_at INTEGER NOT NULL DEFAULT (` + now + `)
@@ -98,6 +107,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_key ON users(public_key);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_chat_public_key ON users(chat_public_key);
 CREATE INDEX IF NOT EXISTS idx_messages_receiver_delivered ON messages(receiver_id, delivered);
 CREATE INDEX IF NOT EXISTS idx_pending_events_user ON pending_events(user_id);
+CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invitation_code ON users(invitation_code);
 `
 }
