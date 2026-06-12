@@ -72,6 +72,10 @@ func main() {
 	contactsMux := routes.NewContacts(d, notifier)
 	r.With(auth.RequireSignatureAuth(d)).Mount("/api/contacts", contactsMux)
 
+	// Device token registration/removal
+	r.With(auth.RequireSignatureAuth(d)).Method("POST", "/api/device-token", routes.NewDeviceToken(d))
+	r.With(auth.RequireSignatureAuth(d)).Method("DELETE", "/api/device-token", routes.NewDeviceToken(d))
+
 	// Admin (bearer-token, rate-limited)
 	r.With(httprate.LimitByIP(60, time.Minute)).Get("/api/admin/stats", routes.NewAdmin(d, cfg.AdminSecret, conns).ServeHTTP)
 
