@@ -96,7 +96,7 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 			slog.Info("signaling.call_offer.waking",
 				"from", userID, "to", p.To, "app_sockets", appCount, "service_sockets", serviceCount)
 			go s.push.SendCallWake(context.Background(), p.To, userID, p.CallType)
-			if !s.presence.WaitForAppSocket(ctx, p.To, 25*time.Second) {
+			if !s.presence.WaitForAppSocket(ctx, p.To, 25*time.Second, func() bool { return !socket.Connected() }) {
 				slog.Info("signaling.call_offer.unavailable",
 					"from", userID, "to", p.To, "reason", "wake_timeout")
 				if err := enqueueMissedCall(ctx, s.d, userID, p.To, p.CallType); err != nil {

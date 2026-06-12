@@ -253,10 +253,10 @@ func (p *Presence) serviceSocketCount(userID string) int {
 	return n
 }
 
-// WaitForAppSocket blocks until the user has an app socket or the timeout
-// elapses. Returns true if an app socket appeared. Polling keeps it simple and
-// the per-call counts are already mutex-guarded.
-func (p *Presence) WaitForAppSocket(ctx context.Context, userID string, timeout time.Duration) bool {
+// WaitForAppSocket blocks until the user has an app socket, the timeout
+// elapses, the context is cancelled, or abort() returns true (e.g. the caller
+// disconnected). Returns true only if an app socket appeared.
+func (p *Presence) WaitForAppSocket(ctx context.Context, userID string, timeout time.Duration, abort func() bool) bool {
 	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 	tick := time.NewTicker(300 * time.Millisecond)
@@ -264,6 +264,9 @@ func (p *Presence) WaitForAppSocket(ctx context.Context, userID string, timeout 
 	for {
 		if p.HasAppSocket(userID) {
 			return true
+		}
+		if abort != nil && abort() {
+			return false
 		}
 		select {
 		case <-deadline.C:

@@ -38,7 +38,9 @@ func (c realClient) Send(ctx context.Context, token string, data map[string]stri
 		Android: &messaging.AndroidConfig{Priority: "high"},
 	})
 	if err != nil {
-		if messaging.IsUnregistered(err) || messaging.IsInvalidArgument(err) {
+		// Only prune on a definitively dead token. IsInvalidArgument can also
+		// indicate a malformed payload, so do NOT prune on it.
+		if messaging.IsUnregistered(err) {
 			return ErrInvalidToken
 		}
 		return err
