@@ -10,6 +10,7 @@ import (
 
 	"github.com/davin4u/faceless-server-go/internal/crypto"
 	"github.com/davin4u/faceless-server-go/internal/db"
+	"github.com/davin4u/faceless-server-go/internal/push"
 	"github.com/google/uuid"
 	"github.com/zishang520/engine.io/v2/types"
 	socketio "github.com/zishang520/socket.io/v2/socket"
@@ -23,6 +24,7 @@ type Server struct {
 	d        db.DB
 	logICE   bool
 	presence *Presence
+	push     push.Sender
 	mu       sync.RWMutex
 }
 
@@ -36,6 +38,7 @@ func New(d db.DB, logICE bool) *Server {
 		d:        d,
 		logICE:   logICE,
 		presence: NewPresence(io, d),
+		push:     push.Noop{},
 	}
 	io.Use(s.authMiddleware)
 	io.On("connection", s.onConnect) //nolint:errcheck
@@ -61,6 +64,13 @@ func (s *Server) Close(_ context.Context) error {
 		return closeErr
 	case <-time.After(5 * time.Second):
 		return nil
+	}
+}
+
+// SetPush installs the FCM sender (called from main after the sender is built).
+func (s *Server) SetPush(p push.Sender) {
+	if p != nil {
+		s.push = p
 	}
 }
 

@@ -19,6 +19,7 @@ import (
 	"github.com/davin4u/faceless-server-go/internal/db"
 	"github.com/davin4u/faceless-server-go/internal/logger"
 	"github.com/davin4u/faceless-server-go/internal/pow"
+	"github.com/davin4u/faceless-server-go/internal/push"
 	"github.com/davin4u/faceless-server-go/internal/routes"
 	"github.com/davin4u/faceless-server-go/internal/socketio"
 )
@@ -46,6 +47,20 @@ func main() {
 	go powSvc.StartGC(rootCtx.Done())
 
 	sio := socketio.New(d, cfg.LogICE)
+	if cfg.FCMCredentials != "" {
+		sender, perr := push.New(context.Background(), cfg.FCMCredentials,
+			func(ctx context.Context, userID string) ([]string, error) { return db.GetUserTokens(ctx, d, userID) },
+			func(ctx context.Context, token string) { _ = db.DeleteToken(ctx, d, token) },
+		)
+		if perr != nil {
+			slog.Error("push.init.error", "err", perr)
+		} else {
+			sio.SetPush(sender)
+			slog.Info("push.enabled")
+		}
+	} else {
+		slog.Info("push.disabled", "reason", "FCM_CREDENTIALS not set")
+	}
 	notifier := socketio.Notifier(sio)
 	conns := socketio.ConnectionCounter(sio)
 
