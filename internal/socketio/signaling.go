@@ -21,6 +21,7 @@ type callTiming struct {
 	AnswerTime time.Time
 	CallerID   string
 	CalleeID   string
+	CallType   string
 }
 
 type iceBucket struct {
@@ -93,12 +94,19 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 		// service socket). Wake them via FCM and hold the caller ringing until an
 		// app socket appears, bounded by the call-timeout window.
 		if !s.presence.HasAppSocket(p.To) {
-			slog.Info("signaling.call_offer.waking",
-				"from", userID, "to", p.To, "app_sockets", appCount, "service_sockets", serviceCount)
-			go s.push.SendCallWake(context.Background(), p.To, userID, p.CallType)
-			if !s.presence.WaitForAppSocket(ctx, p.To, 25*time.Second, func() bool { return !socket.Connected() }) {
+			woke := false
+			// Only hold the caller ringing while we FCM-wake the callee if they
+			// actually have a device token (otherwise the wait is pointless).
+			tokens, _ := db.GetUserTokens(ctx, s.d, p.To)
+			if len(tokens) > 0 {
+				slog.Info("signaling.call_offer.waking",
+					"from", userID, "to", p.To, "app_sockets", appCount, "service_sockets", serviceCount)
+				go s.push.SendCallWake(context.Background(), p.To, userID, p.CallType)
+				woke = s.presence.WaitForAppSocket(ctx, p.To, 25*time.Second, func() bool { return !socket.Connected() })
+			}
+			if !woke {
 				slog.Info("signaling.call_offer.unavailable",
-					"from", userID, "to", p.To, "reason", "wake_timeout")
+					"from", userID, "to", p.To, "reason", "offline_or_wake_timeout")
 				if err := enqueueMissedCall(ctx, s.d, userID, p.To, p.CallType); err != nil {
 					slog.Error("signaling.missed_call.enqueue_error", "to", p.To, "err", err)
 				}
@@ -127,7 +135,7 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 
 		k := callKey(userID, p.To)
 		callMu.Lock()
-		callTimings[k] = &callTiming{OfferTime: time.Now(), CallerID: userID, CalleeID: p.To}
+		callTimings[k] = &callTiming{OfferTime: time.Now(), CallerID: userID, CalleeID: p.To, CallType: p.CallType}
 		callIceCount[k] = &iceCounts{}
 		callMu.Unlock()
 
@@ -270,6 +278,18 @@ func (s *Server) endCall(k, reason, byUserID string) {
 	delete(callIceCount, k)
 	delete(activeCalls, k)
 	callMu.Unlock()
+
+	// Server-authoritative missed call: a call that was offered/forwarded but
+	// never answered, was not actively declined, and whose callee has no app
+	// socket to record it live, is recorded as a missed call for the callee.
+	if t != nil && !hadAnswer && reason != "reject" && !s.presence.HasAppSocket(t.CalleeID) {
+		if err := enqueueMissedCall(ctx, s.d, t.CallerID, t.CalleeID, t.CallType); err != nil {
+			slog.Error("signaling.missed_call.enqueue_error", "to", t.CalleeID, "err", err)
+		} else {
+			slog.Info("signaling.missed_call.enqueued_on_end",
+				"from", t.CallerID, "to", t.CalleeID, "reason", reason)
+		}
+	}
 
 	if t != nil {
 		offerToAnswer := int64(-1)
