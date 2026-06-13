@@ -1,0 +1,45 @@
+name: deploy
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # lets you trigger a deploy manually too
+
+concurrency:                # never let two deploys overlap
+  group: deploy-prod
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Build static linux/amd64 binary
+        run: |
+          chmod +x ./scripts/build-linux.sh
+          ./scripts/build-linux.sh           # -> ./dist/faceless-server (per your INSTALL.md)
+          test -f ./dist/faceless-server
+          file ./dist/faceless-server
+
+      - name: Configure SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+
+      - name: Upload binary to server
+        run: |
+          scp -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes \
+            ./dist/faceless-server \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:/home/deploy/incoming/faceless-server"
+
+      - name: Deploy (atomic swap + restart + health-check + auto-rollback)
+        run: |
+          ssh -i ~/.ssh/id_ed25519 -o IdentitiesOnly=yes \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}" \
+            'sudo -n /usr/local/bin/faceless-deploy'
