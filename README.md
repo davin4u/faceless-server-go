@@ -43,6 +43,16 @@ LOG_FORMAT=text LOG_LEVEL=debug go run ./cmd/server
 
 `LOG_ICE=true` switches every ICE candidate from DEBUG to INFO — useful when investigating call failures.
 
+## File uploads (optional)
+
+File uploads require an S3-compatible object store. Set `S3_BUCKET` (plus `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_USE_SSL`) in `.env` to enable the feature. Leave `S3_BUCKET` empty and the `/api/files` routes are simply not mounted — the server runs identically to before.
+
+Key design points:
+- The server stores only opaque E2E-encrypted blobs — no filenames, MIME types, or dimensions are recorded.
+- Clients receive presigned PUT (upload) and GET (download) URLs directly to the object store; file bytes never pass through the app server.
+- Storage is measured against a single global pool shared across all users (`MAX_STORAGE_TOTAL_GB`), with a per-file cap (`MAX_FILE_SIZE_MB`).
+- Files are reclaimed when their associated message is deleted by the sender, or by the hourly orphan sweep that removes any blob whose message row has already been cleaned up.
+
 ## Cutover from Node
 
 1. Stop the Node server: `systemctl stop faceless-server`

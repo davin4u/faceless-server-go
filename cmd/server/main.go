@@ -17,11 +17,13 @@ import (
 	"github.com/davin4u/faceless-server-go/internal/auth"
 	"github.com/davin4u/faceless-server-go/internal/config"
 	"github.com/davin4u/faceless-server-go/internal/db"
+	"github.com/davin4u/faceless-server-go/internal/files"
 	"github.com/davin4u/faceless-server-go/internal/logger"
 	"github.com/davin4u/faceless-server-go/internal/pow"
 	"github.com/davin4u/faceless-server-go/internal/push"
 	"github.com/davin4u/faceless-server-go/internal/routes"
 	"github.com/davin4u/faceless-server-go/internal/socketio"
+	"github.com/davin4u/faceless-server-go/internal/storage"
 )
 
 func main() {
@@ -61,6 +63,25 @@ func main() {
 	} else {
 		slog.Info("push.disabled", "reason", "FCM_CREDENTIALS not set")
 	}
+
+	var fileRoutes *files.Service
+	if cfg.S3Bucket != "" {
+		st, serr := storage.NewMinio(cfg.S3Endpoint, cfg.S3Region, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL, cfg.S3Bucket)
+		if serr != nil {
+			slog.Error("files.init.error", "err", serr)
+		} else {
+			filesSvc := files.New(d, st, cfg.MaxFileSizeBytes, cfg.MaxStorageTotalBytes)
+			sio.SetFiles(filesSvc)
+			filesSvc.StartCleanup(rootCtx)
+			fileRoutes = filesSvc
+			slog.Info("files.enabled", "bucket", cfg.S3Bucket,
+				"max_file_mb", cfg.MaxFileSizeBytes/(1024*1024),
+				"max_total_gb", cfg.MaxStorageTotalBytes/(1024*1024*1024))
+		}
+	} else {
+		slog.Info("files.disabled", "reason", "S3_BUCKET not set")
+	}
+
 	notifier := socketio.Notifier(sio)
 	conns := socketio.ConnectionCounter(sio)
 
@@ -86,6 +107,12 @@ func main() {
 	// Authenticated contacts (mounted under /api/contacts)
 	contactsMux := routes.NewContacts(d, notifier)
 	r.With(auth.RequireSignatureAuth(d)).Mount("/api/contacts", contactsMux)
+
+	if fileRoutes != nil {
+		r.With(httprate.LimitByIP(30, time.Minute)).
+			With(auth.RequireSignatureAuth(d)).
+			Mount("/api/files", routes.NewFiles(fileRoutes))
+	}
 
 	// Device token registration/removal
 	r.With(auth.RequireSignatureAuth(d)).Method("POST", "/api/device-token", routes.NewDeviceToken(d))
