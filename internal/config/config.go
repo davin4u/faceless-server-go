@@ -20,6 +20,16 @@ type Config struct {
 	LogFormat     string
 	LogICE        bool
 	FCMCredentials string // path to Firebase service-account JSON; empty = push disabled
+
+	// File storage (S3-compatible). Feature is disabled unless S3Bucket is set.
+	S3Endpoint           string
+	S3Region             string
+	S3Bucket             string
+	S3AccessKey          string
+	S3SecretKey          string
+	S3UseSSL             bool
+	MaxStorageTotalBytes int64
+	MaxFileSizeBytes     int64
 }
 
 // Load reads .env (if present) then environment variables and returns Config.
@@ -37,6 +47,15 @@ func Load() Config {
 		LogFormat:     getStr("LOG_FORMAT", "json"),
 		LogICE:        strings.EqualFold(getStr("LOG_ICE", "false"), "true"),
 		FCMCredentials: getStr("FCM_CREDENTIALS", ""),
+
+		S3Endpoint:           getStr("S3_ENDPOINT", ""),
+		S3Region:             getStr("S3_REGION", ""),
+		S3Bucket:             getStr("S3_BUCKET", ""),
+		S3AccessKey:          getStr("S3_ACCESS_KEY", ""),
+		S3SecretKey:          getStr("S3_SECRET_KEY", ""),
+		S3UseSSL:             getBool("S3_USE_SSL", true),
+		MaxStorageTotalBytes: int64(getInt("MAX_STORAGE_TOTAL_GB", 10)) * 1024 * 1024 * 1024,
+		MaxFileSizeBytes:     int64(getInt("MAX_FILE_SIZE_MB", 25)) * 1024 * 1024,
 	}
 }
 
@@ -58,4 +77,12 @@ func getInt(key string, fallback int) int {
 		return fallback
 	}
 	return n
+}
+
+func getBool(key string, fallback bool) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	return strings.EqualFold(v, "true") || v == "1"
 }
