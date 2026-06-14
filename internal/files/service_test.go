@@ -131,3 +131,56 @@ func TestCommit_SizeMismatchRejected(t *testing.T) {
 		t.Fatalf("err = %v, want ErrSizeMismatch", err)
 	}
 }
+
+func commitOne(t *testing.T, svc *Service, d db.DB, sender, receiver string) string {
+	t.Helper()
+	ctx := context.Background()
+	fileID, _, err := svc.RequestUpload(ctx, sender, receiver, 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Commit(ctx, fileID, sender, "msg-x"); err != nil {
+		t.Fatal(err)
+	}
+	return fileID
+}
+
+func TestDownloadURL_SenderAndReceiverAllowed(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	st := &mockStorage{getURL: "https://get", size: 1000}
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	fileID := commitOne(t, svc, d, "uA", "uB")
+
+	for _, who := range []string{"uA", "uB"} {
+		url, err := svc.DownloadURL(context.Background(), fileID, who)
+		if err != nil || url == "" {
+			t.Fatalf("DownloadURL(%s) err=%v url=%q", who, err, url)
+		}
+	}
+}
+
+func TestDownloadURL_StrangerForbidden(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	_, _ = d.Run(context.Background(), `INSERT INTO users (id, contact_code, display_name, public_key) VALUES ('uC','CCCC-4444','C','pkC')`)
+	st := &mockStorage{getURL: "https://get", size: 1000}
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	fileID := commitOne(t, svc, d, "uA", "uB")
+
+	if _, err := svc.DownloadURL(context.Background(), fileID, "uC"); err != ErrForbidden {
+		t.Fatalf("err = %v, want ErrForbidden", err)
+	}
+}
+
+func TestDownloadURL_PendingNotFound(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	st := &mockStorage{getURL: "https://get"}
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	ctx := context.Background()
+	fileID, _, _ := svc.RequestUpload(ctx, "uA", "uB", 1000) // never committed
+	if _, err := svc.DownloadURL(ctx, fileID, "uA"); err != ErrNotFound {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}

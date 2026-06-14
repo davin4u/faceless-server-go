@@ -101,3 +101,20 @@ func (s *Service) Commit(ctx context.Context, fileID, senderID, messageID string
 		`UPDATE files SET status = 'committed', message_id = ? WHERE id = ?`, messageID, fileID)
 	return err
 }
+
+// DownloadURL returns a presigned GET URL for a committed file, but only to its
+// sender or receiver.
+func (s *Service) DownloadURL(ctx context.Context, fileID, requesterID string) (string, error) {
+	row, err := s.d.Get(ctx,
+		`SELECT object_key, sender_id, receiver_id FROM files WHERE id = ? AND status = 'committed'`, fileID)
+	if err != nil {
+		return "", err
+	}
+	if row == nil {
+		return "", ErrNotFound
+	}
+	if requesterID != row.Str("sender_id") && requesterID != row.Str("receiver_id") {
+		return "", ErrForbidden
+	}
+	return s.st.PresignGet(ctx, row.Str("object_key"), storage.GetTTL)
+}
