@@ -10,6 +10,11 @@ import (
 // Returns number of rows deleted.
 func CleanupStaleMessages(ctx context.Context, d DB) (int64, error) {
 	cutoff := time.Now().Unix() - 30*86400
+	// Unlink files whose undelivered message is about to be purged so the
+	// files-service orphan sweep reclaims the S3 object + quota.
+	_, _ = d.Run(ctx,
+		`UPDATE files SET message_id = NULL
+		 WHERE message_id IN (SELECT id FROM messages WHERE timestamp < ? AND delivered = 0)`, cutoff)
 	res, err := d.Run(ctx, `DELETE FROM messages WHERE timestamp < ? AND delivered = 0`, cutoff)
 	if err != nil {
 		return 0, err
