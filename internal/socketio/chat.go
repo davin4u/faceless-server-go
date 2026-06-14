@@ -87,7 +87,9 @@ func (s *Server) registerChatHandlers(socket *socketio.Socket) {
 	})
 
 	socket.On("message:ack", func(args ...any) {
-		var p struct{ MessageID string `json:"messageId"` }
+		var p struct {
+			MessageID string `json:"messageId"`
+		}
 		if !decodeArg(args, &p) || p.MessageID == "" {
 			return
 		}
@@ -110,6 +112,9 @@ func (s *Server) registerChatHandlers(socket *socketio.Socket) {
 			return
 		}
 		_, _ = s.d.Run(ctx, `DELETE FROM messages WHERE id = ? AND sender_id = ?`, p.MessageID, userID)
+		if s.files != nil {
+			s.files.DeleteByMessage(ctx, p.MessageID, userID)
+		}
 
 		if s.presence.IsUserOnline(p.To) {
 			s.presence.EmitToUserAppOnly(p.To, "message:deleted",

@@ -16,6 +16,12 @@ import (
 	socketio "github.com/zishang520/socket.io/v2/socket"
 )
 
+// FileDeleter lets the socket layer free a message's stored file without
+// importing the files package (avoids a dependency cycle).
+type FileDeleter interface {
+	DeleteByMessage(ctx context.Context, messageID, senderID string)
+}
+
 // Server wraps zishang520 Socket.IO with our auth, presence, chat, signaling,
 // and delivery handlers. It also implements Notifier and ConnectionCounter so
 // the REST routes can push events without importing the library directly.
@@ -25,6 +31,7 @@ type Server struct {
 	logICE   bool
 	presence *Presence
 	push     push.Sender
+	files    FileDeleter
 	mu       sync.RWMutex
 }
 
@@ -71,6 +78,13 @@ func (s *Server) Close(_ context.Context) error {
 func (s *Server) SetPush(p push.Sender) {
 	if p != nil {
 		s.push = p
+	}
+}
+
+// SetFiles installs the file lifecycle hook (called from main if S3 is enabled).
+func (s *Server) SetFiles(f FileDeleter) {
+	if f != nil {
+		s.files = f
 	}
 }
 
