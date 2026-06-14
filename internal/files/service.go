@@ -76,3 +76,28 @@ func (s *Service) RequestUpload(ctx context.Context, senderID, receiverID string
 	}
 	return fileID, url, nil
 }
+
+// Commit verifies the uploaded object's size matches what was declared, then
+// marks the reservation committed and links it to the chat message. Only the
+// original sender may commit their own pending file.
+func (s *Service) Commit(ctx context.Context, fileID, senderID, messageID string) error {
+	row, err := s.d.Get(ctx,
+		`SELECT object_key, size_bytes FROM files WHERE id = ? AND sender_id = ? AND status = 'pending'`,
+		fileID, senderID)
+	if err != nil {
+		return err
+	}
+	if row == nil {
+		return ErrNotFound
+	}
+	actual, err := s.st.Size(ctx, row.Str("object_key"))
+	if err != nil {
+		return err
+	}
+	if actual != row.Int("size_bytes") {
+		return ErrSizeMismatch
+	}
+	_, err = s.d.Run(ctx,
+		`UPDATE files SET status = 'committed', message_id = ? WHERE id = ?`, messageID, fileID)
+	return err
+}

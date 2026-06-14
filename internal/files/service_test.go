@@ -90,3 +90,44 @@ func TestRequestUpload_StorageFull(t *testing.T) {
 		t.Fatalf("err = %v, want ErrStorageFull", err)
 	}
 }
+
+func TestCommit_OK(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	st := &mockStorage{putURL: "https://put", size: 1000}
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	ctx := context.Background()
+
+	fileID, _, _ := svc.RequestUpload(ctx, "uA", "uB", 1000)
+	if err := svc.Commit(ctx, fileID, "uA", "msg-1"); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	row, _ := d.Get(ctx, `SELECT status, message_id FROM files WHERE id = ?`, fileID)
+	if row.Str("status") != "committed" || row.Str("message_id") != "msg-1" {
+		t.Fatalf("not committed/linked: %+v", row)
+	}
+}
+
+func TestCommit_WrongOwnerRejected(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	st := &mockStorage{size: 1000}
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	ctx := context.Background()
+	fileID, _, _ := svc.RequestUpload(ctx, "uA", "uB", 1000)
+	if err := svc.Commit(ctx, fileID, "uB", "msg-1"); err != ErrNotFound {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestCommit_SizeMismatchRejected(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	st := &mockStorage{size: 999} // uploaded fewer bytes than declared
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	ctx := context.Background()
+	fileID, _, _ := svc.RequestUpload(ctx, "uA", "uB", 1000)
+	if err := svc.Commit(ctx, fileID, "uA", "msg-1"); err != ErrSizeMismatch {
+		t.Fatalf("err = %v, want ErrSizeMismatch", err)
+	}
+}
