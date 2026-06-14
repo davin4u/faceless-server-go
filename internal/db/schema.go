@@ -97,6 +97,19 @@ CREATE TABLE IF NOT EXISTS daily_stats (
   total_call_duration_seconds INTEGER DEFAULT 0,
   registrations INTEGER DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS files (
+  id TEXT PRIMARY KEY,
+  sender_id TEXT NOT NULL,
+  receiver_id TEXT NOT NULL,
+  object_key TEXT NOT NULL UNIQUE,
+  size_bytes INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'committed')),
+  message_id TEXT,
+  created_at INTEGER NOT NULL DEFAULT (` + now + `),
+  FOREIGN KEY (sender_id) REFERENCES users(id),
+  FOREIGN KEY (receiver_id) REFERENCES users(id)
+);
 `
 }
 
@@ -109,6 +122,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_receiver_delivered ON messages(receiver_
 CREATE INDEX IF NOT EXISTS idx_pending_events_user ON pending_events(user_id);
 CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invitation_code ON users(invitation_code);
+CREATE INDEX IF NOT EXISTS idx_files_message ON files(message_id);
+CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
 `
 }
 
