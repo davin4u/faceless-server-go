@@ -48,6 +48,8 @@ func seedUsers(t *testing.T, d db.DB) {
 	ctx := context.Background()
 	_, _ = d.Run(ctx, `INSERT INTO users (id, contact_code, display_name, public_key) VALUES ('uA','AAAA-2222','A','pkA')`)
 	_, _ = d.Run(ctx, `INSERT INTO users (id, contact_code, display_name, public_key) VALUES ('uB','BBBB-3333','B','pkB')`)
+	_, _ = d.Run(ctx, `INSERT INTO contacts (user_id, contact_id, status) VALUES ('uA','uB','accepted')`)
+	_, _ = d.Run(ctx, `INSERT INTO contacts (user_id, contact_id, status) VALUES ('uB','uA','accepted')`)
 }
 
 func TestRequestUpload_OK(t *testing.T) {
@@ -222,6 +224,17 @@ func TestDeleteByMessage_OnlyOwnerDeletes(t *testing.T) {
 	row, _ := d.Get(ctx, `SELECT id FROM files WHERE id = ?`, fileID)
 	if row == nil {
 		t.Fatal("file should NOT be deleted by non-owner")
+	}
+}
+
+func TestRequestUpload_NotContactsRejected(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	_, _ = d.Run(context.Background(), `INSERT INTO users (id, contact_code, display_name, public_key) VALUES ('uC','CCCC-4444','C','pkC')`)
+	svc := New(d, &mockStorage{}, 25*1024*1024, 10*1024*1024*1024)
+	_, _, err := svc.RequestUpload(context.Background(), "uA", "uC", 1000)
+	if err != ErrNotContacts {
+		t.Fatalf("err = %v, want ErrNotContacts", err)
 	}
 }
 

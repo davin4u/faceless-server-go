@@ -21,6 +21,7 @@ var (
 	ErrNotFound     = errors.New("file not found")
 	ErrForbidden    = errors.New("not authorized for this file")
 	ErrSizeMismatch = errors.New("uploaded size does not match declared size")
+	ErrNotContacts  = errors.New("recipient is not an accepted contact")
 )
 
 // reserveWindow is how long a pending reservation counts against the quota
@@ -53,6 +54,14 @@ func (s *Service) usedBytes(ctx context.Context) (int64, error) {
 // RequestUpload validates the size against the per-file limit and the global
 // pool, reserves a pending row, and returns the fileID + a presigned PUT URL.
 func (s *Service) RequestUpload(ctx context.Context, senderID, receiverID string, size int64) (string, string, error) {
+	contact, err := s.d.Get(ctx,
+		`SELECT 1 FROM contacts WHERE user_id = ? AND contact_id = ? AND status = 'accepted'`, senderID, receiverID)
+	if err != nil {
+		return "", "", err
+	}
+	if contact == nil {
+		return "", "", ErrNotContacts
+	}
 	if size <= 0 || size > s.maxFile {
 		return "", "", ErrTooLarge
 	}

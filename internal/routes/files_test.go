@@ -28,6 +28,8 @@ func newFilesHandler(t *testing.T, size int64) (*files.Service, db.DB) {
 	ctx := context.Background()
 	_, _ = d.Run(ctx, `INSERT INTO users (id, contact_code, display_name, public_key) VALUES ('uA','AAAA-2222','A','pkA')`)
 	_, _ = d.Run(ctx, `INSERT INTO users (id, contact_code, display_name, public_key) VALUES ('uB','BBBB-3333','B','pkB')`)
+	_, _ = d.Run(ctx, `INSERT INTO contacts (user_id, contact_id, status) VALUES ('uA','uB','accepted')`)
+	_, _ = d.Run(ctx, `INSERT INTO contacts (user_id, contact_id, status) VALUES ('uB','uA','accepted')`)
 	svc := files.New(d, &fakeStorage{size: size}, 25*1024*1024, 10*1024*1024*1024)
 	return svc, d
 }
@@ -55,6 +57,17 @@ func TestFiles_RequestUpload413TooLarge(t *testing.T) {
 	rr := callWithUser(h, "POST", "/request-upload", body, &auth.User{ID: "uA"})
 	if rr.Code != 413 {
 		t.Fatalf("status = %d, want 413", rr.Code)
+	}
+}
+
+func TestFiles_RequestUpload403NotContacts(t *testing.T) {
+	svc, d := newFilesHandler(t, 1000)
+	_, _ = d.Run(context.Background(), `INSERT INTO users (id, contact_code, display_name, public_key) VALUES ('uC','CCCC-4444','C','pkC')`)
+	h := NewFiles(svc)
+	body, _ := json.Marshal(map[string]any{"sizeBytes": 1000, "to": "uC"})
+	rr := callWithUser(h, "POST", "/request-upload", body, &auth.User{ID: "uA"})
+	if rr.Code != 403 {
+		t.Fatalf("status = %d, want 403", rr.Code)
 	}
 }
 

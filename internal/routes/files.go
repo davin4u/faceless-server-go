@@ -38,6 +38,9 @@ func requestUpload(svc *files.Service) http.HandlerFunc {
 		}
 		fileID, url, err := svc.RequestUpload(r.Context(), u.ID, b.To, b.SizeBytes)
 		switch {
+		case errors.Is(err, files.ErrNotContacts):
+			writeJSONErr(w, 403, "Recipient is not in your contacts")
+			return
 		case errors.Is(err, files.ErrTooLarge):
 			writeJSONErr(w, 413, "File exceeds the size limit")
 			return
