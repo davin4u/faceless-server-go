@@ -184,3 +184,69 @@ func TestDownloadURL_PendingNotFound(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestDeleteByMessage_RemovesObjectAndRow(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	st := &mockStorage{size: 1000}
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	ctx := context.Background()
+
+	fileID, _, _ := svc.RequestUpload(ctx, "uA", "uB", 1000)
+	_ = svc.Commit(ctx, fileID, "uA", "msg-del")
+	objRow, _ := d.Get(ctx, `SELECT object_key FROM files WHERE id = ?`, fileID)
+	objKey := objRow.Str("object_key")
+
+	svc.DeleteByMessage(ctx, "msg-del", "uA")
+
+	row, _ := d.Get(ctx, `SELECT id FROM files WHERE id = ?`, fileID)
+	if row != nil {
+		t.Fatal("file row should be gone")
+	}
+	if len(st.deleted) != 1 || st.deleted[0] != objKey {
+		t.Fatalf("object not deleted from storage: %v", st.deleted)
+	}
+}
+
+func TestDeleteByMessage_OnlyOwnerDeletes(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	st := &mockStorage{size: 1000}
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	ctx := context.Background()
+	fileID, _, _ := svc.RequestUpload(ctx, "uA", "uB", 1000)
+	_ = svc.Commit(ctx, fileID, "uA", "msg-del")
+
+	svc.DeleteByMessage(ctx, "msg-del", "uB") // receiver, not sender
+
+	row, _ := d.Get(ctx, `SELECT id FROM files WHERE id = ?`, fileID)
+	if row == nil {
+		t.Fatal("file should NOT be deleted by non-owner")
+	}
+}
+
+func TestCleanupOrphans_ReapsStalePendingAndUnlinked(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	st := &mockStorage{}
+	svc := New(d, st, 25*1024*1024, 10*1024*1024*1024)
+	ctx := context.Background()
+	old := time.Now().Unix() - reserveWindow - 10
+	_, _ = d.Run(ctx, `INSERT INTO files (id, sender_id, receiver_id, object_key, size_bytes, status, created_at) VALUES ('p1','uA','uB','kp1',10,'pending',?)`, old)
+	_, _ = d.Run(ctx, `INSERT INTO files (id, sender_id, receiver_id, object_key, size_bytes, status, created_at) VALUES ('c1','uA','uB','kc1',10,'committed',?)`, old)
+	_, _ = d.Run(ctx, `INSERT INTO files (id, sender_id, receiver_id, object_key, size_bytes, status, created_at) VALUES ('p2','uA','uB','kp2',10,'pending',?)`, time.Now().Unix())
+
+	svc.CleanupOrphans(ctx)
+
+	for _, id := range []string{"p1", "c1"} {
+		if row, _ := d.Get(ctx, `SELECT id FROM files WHERE id = ?`, id); row != nil {
+			t.Errorf("orphan %s should be reaped", id)
+		}
+	}
+	if row, _ := d.Get(ctx, `SELECT id FROM files WHERE id = ?`, "p2"); row == nil {
+		t.Error("fresh pending p2 must survive")
+	}
+	if len(st.deleted) != 2 {
+		t.Errorf("expected 2 object deletions, got %d (%v)", len(st.deleted), st.deleted)
+	}
+}

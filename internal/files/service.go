@@ -118,3 +118,51 @@ func (s *Service) DownloadURL(ctx context.Context, fileID, requesterID string) (
 	}
 	return s.st.PresignGet(ctx, row.Str("object_key"), storage.GetTTL)
 }
+
+// DeleteByMessage deletes the S3 object(s) + row(s) linked to a message, but
+// only those the given sender owns. Best-effort: storage errors are tolerated
+// so the DB row is still removed (a missing object is harmless).
+func (s *Service) DeleteByMessage(ctx context.Context, messageID, senderID string) {
+	rows, err := s.d.All(ctx,
+		`SELECT id, object_key FROM files WHERE message_id = ? AND sender_id = ?`, messageID, senderID)
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		_ = s.st.Delete(ctx, r.Str("object_key"))
+		_, _ = s.d.Run(ctx, `DELETE FROM files WHERE id = ?`, r.Str("id"))
+	}
+}
+
+// CleanupOrphans reaps stale pending reservations and committed-but-unlinked
+// uploads (abandoned before the message was sent). Called periodically.
+func (s *Service) CleanupOrphans(ctx context.Context) {
+	cutoff := time.Now().Unix() - reserveWindow
+	rows, err := s.d.All(ctx,
+		`SELECT id, object_key FROM files
+		 WHERE created_at < ? AND (status = 'pending' OR (status = 'committed' AND message_id IS NULL))`, cutoff)
+	if err != nil {
+		return
+	}
+	for _, r := range rows {
+		_ = s.st.Delete(ctx, r.Str("object_key"))
+		_, _ = s.d.Run(ctx, `DELETE FROM files WHERE id = ?`, r.Str("id"))
+	}
+}
+
+// StartCleanup runs CleanupOrphans hourly until ctx is cancelled (initial run sync).
+func (s *Service) StartCleanup(ctx context.Context) {
+	s.CleanupOrphans(ctx)
+	go func() {
+		t := time.NewTicker(1 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				s.CleanupOrphans(ctx)
+			}
+		}
+	}()
+}
