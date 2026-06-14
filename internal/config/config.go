@@ -10,15 +10,15 @@ import (
 )
 
 type Config struct {
-	Port          int
-	DBType        string // "sqlite" | "postgres"
-	DBPath        string
-	DatabaseURL   string
-	PoWDifficulty int
-	AdminSecret   string
-	LogLevel      string
-	LogFormat     string
-	LogICE        bool
+	Port           int
+	DBType         string // "sqlite" | "postgres"
+	DBPath         string
+	DatabaseURL    string
+	PoWDifficulty  int
+	AdminSecret    string
+	LogLevel       string
+	LogFormat      string
+	LogICE         bool
 	FCMCredentials string // path to Firebase service-account JSON; empty = push disabled
 
 	// File storage (S3-compatible). Feature is disabled unless S3Bucket is set.
@@ -37,15 +37,15 @@ func Load() Config {
 	_ = godotenv.Load() // ignore error; .env is optional
 
 	return Config{
-		Port:          getInt("PORT", 3000),
-		DBType:        getStr("DB_TYPE", "sqlite"),
-		DBPath:        getStr("DB_PATH", "./data/messenger.db"),
-		DatabaseURL:   getStr("DATABASE_URL", ""),
-		PoWDifficulty: getInt("POW_DIFFICULTY", 14),
-		AdminSecret:   getStr("ADMIN_SECRET", ""),
-		LogLevel:      getStr("LOG_LEVEL", "info"),
-		LogFormat:     getStr("LOG_FORMAT", "json"),
-		LogICE:        strings.EqualFold(getStr("LOG_ICE", "false"), "true"),
+		Port:           getInt("PORT", 3000),
+		DBType:         getStr("DB_TYPE", "sqlite"),
+		DBPath:         getStr("DB_PATH", "./data/messenger.db"),
+		DatabaseURL:    getStr("DATABASE_URL", ""),
+		PoWDifficulty:  getInt("POW_DIFFICULTY", 14),
+		AdminSecret:    getStr("ADMIN_SECRET", ""),
+		LogLevel:       getStr("LOG_LEVEL", "info"),
+		LogFormat:      getStr("LOG_FORMAT", "json"),
+		LogICE:         strings.EqualFold(getStr("LOG_ICE", "false"), "true"),
 		FCMCredentials: getStr("FCM_CREDENTIALS", ""),
 
 		S3Endpoint:           getStr("S3_ENDPOINT", ""),
