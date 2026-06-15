@@ -32,7 +32,7 @@ func TestSendMessageWake_buildsDataAndFansOut(t *testing.T) {
 	if len(f.tokens) != 2 {
 		t.Fatalf("want 2 sends, got %d", len(f.tokens))
 	}
-	if f.sent[0]["type"] != "message" || f.sent[0]["from"] != "u1" {
+	if f.sent[0]["type"] != "message" || f.sent[0]["from_user"] != "u1" {
 		t.Fatalf("bad data payload: %v", f.sent[0])
 	}
 	if len(pruned) != 0 {
@@ -62,8 +62,34 @@ func TestSendCallWake_payload(t *testing.T) {
 		prune:     func(_ context.Context, _ string) {},
 	}
 	s.SendCallWake(context.Background(), "u2", "u1", "video")
-	if f.sent[0]["type"] != "call" || f.sent[0]["from"] != "u1" || f.sent[0]["callType"] != "video" {
+	if f.sent[0]["type"] != "call" || f.sent[0]["from_user"] != "u1" || f.sent[0]["callType"] != "video" {
 		t.Fatalf("bad call payload: %v", f.sent[0])
+	}
+}
+
+// Regression: FCM rejects the whole message if a data key is reserved
+// ("from", "notification", "message_type", "google"/"gcm" prefixes). A wake
+// push that uses any of them never wakes the device.
+func TestWakePayloads_avoidReservedFCMKeys(t *testing.T) {
+	f := &fakeFCM{invalid: map[string]bool{}}
+	s := &fcmSender{
+		client:    f,
+		tokensFor: func(_ context.Context, _ string) ([]string, error) { return []string{"t1"}, nil },
+		prune:     func(_ context.Context, _ string) {},
+	}
+	s.SendMessageWake(context.Background(), "u2", "u1")
+	s.SendCallWake(context.Background(), "u2", "u1", "voice")
+
+	reserved := []string{"from", "notification", "message_type"}
+	for _, data := range f.sent {
+		for _, k := range reserved {
+			if _, bad := data[k]; bad {
+				t.Fatalf("data payload uses reserved FCM key %q: %v", k, data)
+			}
+		}
+		if data["from_user"] != "u1" {
+			t.Fatalf("want from_user=u1, got %v", data)
+		}
 	}
 }
 

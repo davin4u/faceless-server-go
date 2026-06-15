@@ -72,12 +72,16 @@ func (s *fcmSender) fanout(ctx context.Context, toUser string, data map[string]s
 	}
 }
 
+// NOTE: FCM reserves certain data-payload keys — "from", "notification",
+// "message_type", and anything prefixed with "google"/"gcm". Using any of them
+// makes FCM reject the ENTIRE message ("Invalid data payload key: from"), so the
+// device never wakes. Keep the sender id under "from_user", never "from".
 func (s *fcmSender) SendMessageWake(ctx context.Context, toUser, fromUser string) {
-	s.fanout(ctx, toUser, map[string]string{"type": "message", "from": fromUser})
+	s.fanout(ctx, toUser, map[string]string{"type": "message", "from_user": fromUser})
 }
 
 func (s *fcmSender) SendCallWake(ctx context.Context, toUser, fromUser, callType string) {
-	s.fanout(ctx, toUser, map[string]string{"type": "call", "from": fromUser, "callType": callType})
+	s.fanout(ctx, toUser, map[string]string{"type": "call", "from_user": fromUser, "callType": callType})
 }
 
 // New builds a real FCM Sender from a service-account JSON file. tokensFor and
