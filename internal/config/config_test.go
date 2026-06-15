@@ -64,7 +64,7 @@ func TestLoad_Overrides(t *testing.T) {
 }
 
 func TestLoad_FileStorageDefaults(t *testing.T) {
-	for _, k := range []string{"S3_BUCKET", "S3_ENDPOINT", "MAX_STORAGE_TOTAL_GB", "MAX_FILE_SIZE_MB", "S3_USE_SSL"} {
+	for _, k := range []string{"S3_BUCKET", "S3_ENDPOINT", "MAX_STORAGE_PER_USER_GB", "MAX_FILE_SIZE_MB", "S3_USE_SSL"} {
 		os.Unsetenv(k)
 	}
 	c := Load()
@@ -74,8 +74,8 @@ func TestLoad_FileStorageDefaults(t *testing.T) {
 	if c.MaxFileSizeBytes != 25*1024*1024 {
 		t.Errorf("MaxFileSizeBytes default = %d, want %d", c.MaxFileSizeBytes, 25*1024*1024)
 	}
-	if c.MaxStorageTotalBytes != 10*1024*1024*1024 {
-		t.Errorf("MaxStorageTotalBytes default = %d, want %d", c.MaxStorageTotalBytes, 10*1024*1024*1024)
+	if c.MaxStoragePerUserBytes != 10*1024*1024*1024 {
+		t.Errorf("MaxStoragePerUserBytes default = %d, want %d", c.MaxStoragePerUserBytes, 10*1024*1024*1024)
 	}
 }
 
@@ -83,10 +83,10 @@ func TestLoad_FileStorageFromEnv(t *testing.T) {
 	os.Setenv("S3_BUCKET", "faceless-files")
 	os.Setenv("S3_ENDPOINT", "s3.example.com")
 	os.Setenv("S3_USE_SSL", "true")
-	os.Setenv("MAX_STORAGE_TOTAL_GB", "20")
+	os.Setenv("MAX_STORAGE_PER_USER_GB", "20")
 	os.Setenv("MAX_FILE_SIZE_MB", "50")
 	defer func() {
-		for _, k := range []string{"S3_BUCKET", "S3_ENDPOINT", "S3_USE_SSL", "MAX_STORAGE_TOTAL_GB", "MAX_FILE_SIZE_MB"} {
+		for _, k := range []string{"S3_BUCKET", "S3_ENDPOINT", "S3_USE_SSL", "MAX_STORAGE_PER_USER_GB", "MAX_FILE_SIZE_MB"} {
 			os.Unsetenv(k)
 		}
 	}()
@@ -94,8 +94,8 @@ func TestLoad_FileStorageFromEnv(t *testing.T) {
 	if c.S3Bucket != "faceless-files" || c.S3Endpoint != "s3.example.com" || !c.S3UseSSL {
 		t.Errorf("unexpected S3 config: %+v", c)
 	}
-	if c.MaxStorageTotalBytes != 20*1024*1024*1024 {
-		t.Errorf("MaxStorageTotalBytes = %d", c.MaxStorageTotalBytes)
+	if c.MaxStoragePerUserBytes != 20*1024*1024*1024 {
+		t.Errorf("MaxStoragePerUserBytes = %d", c.MaxStoragePerUserBytes)
 	}
 	if c.MaxFileSizeBytes != 50*1024*1024 {
 		t.Errorf("MaxFileSizeBytes = %d", c.MaxFileSizeBytes)

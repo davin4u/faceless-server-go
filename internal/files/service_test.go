@@ -93,6 +93,23 @@ func TestRequestUpload_StorageFull(t *testing.T) {
 	}
 }
 
+func TestRequestUpload_PerUserQuotaIsolated(t *testing.T) {
+	d := newDB(t)
+	seedUsers(t, d)
+	ctx := context.Background()
+	// uA has filled almost all of a 1000-byte PER-USER quota.
+	_, _ = d.Run(ctx, `INSERT INTO files (id, sender_id, receiver_id, object_key, size_bytes, status, created_at) VALUES ('f0','uA','uB','k0',900,'committed',1)`)
+	svc := New(d, &mockStorage{putURL: "https://put"}, 25*1024*1024, 1000)
+	// uA is over their own quota for a 200-byte upload...
+	if _, _, err := svc.RequestUpload(ctx, "uA", "uB", 200); err != ErrStorageFull {
+		t.Fatalf("uA err = %v, want ErrStorageFull", err)
+	}
+	// ...but uB's quota is independent and untouched.
+	if _, _, err := svc.RequestUpload(ctx, "uB", "uA", 200); err != nil {
+		t.Fatalf("uB should be allowed (independent quota): %v", err)
+	}
+}
+
 func TestCommit_OK(t *testing.T) {
 	d := newDB(t)
 	seedUsers(t, d)

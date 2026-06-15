@@ -1,4 +1,4 @@
-// Package files combines the DB and object storage to enforce a single global
+// Package files combines the DB and object storage to enforce a per-user
 // byte quota, reserve/commit uploads, authorize downloads, and reap orphans.
 // It is the only place that knows an upload's lifecycle; routes and the socket
 // layer call into it. The server stores only an opaque object key + byte size —
@@ -17,7 +17,7 @@ import (
 
 var (
 	ErrTooLarge     = errors.New("file exceeds per-file size limit")
-	ErrStorageFull  = errors.New("global storage pool is full")
+	ErrStorageFull  = errors.New("user storage quota is full")
 	ErrNotFound     = errors.New("file not found")
 	ErrForbidden    = errors.New("not authorized for this file")
 	ErrSizeMismatch = errors.New("uploaded size does not match declared size")
@@ -29,30 +29,32 @@ var (
 const reserveWindow = 3600 // seconds
 
 type Service struct {
-	d        db.DB
-	st       storage.Storage
-	maxFile  int64
-	maxTotal int64
+	d          db.DB
+	st         storage.Storage
+	maxFile    int64
+	maxPerUser int64
 }
 
-func New(d db.DB, st storage.Storage, maxFile, maxTotal int64) *Service {
-	return &Service{d: d, st: st, maxFile: maxFile, maxTotal: maxTotal}
+func New(d db.DB, st storage.Storage, maxFile, maxPerUser int64) *Service {
+	return &Service{d: d, st: st, maxFile: maxFile, maxPerUser: maxPerUser}
 }
 
-// usedBytes = committed bytes + live (not-yet-expired) pending reservations.
-func (s *Service) usedBytes(ctx context.Context) (int64, error) {
+// usedBytesForUser = a single user's committed bytes + their live
+// (not-yet-expired) pending reservations. Quota is enforced per uploader.
+func (s *Service) usedBytesForUser(ctx context.Context, userID string) (int64, error) {
 	cutoff := time.Now().Unix() - reserveWindow
 	row, err := s.d.Get(ctx,
 		`SELECT COALESCE(SUM(size_bytes), 0) AS total FROM files
-		 WHERE status = 'committed' OR (status = 'pending' AND created_at >= ?)`, cutoff)
+		 WHERE sender_id = ? AND (status = 'committed' OR (status = 'pending' AND created_at >= ?))`, userID, cutoff)
 	if err != nil {
 		return 0, err
 	}
 	return row.Int("total"), nil
 }
 
-// RequestUpload validates the size against the per-file limit and the global
-// pool, reserves a pending row, and returns the fileID + a presigned PUT URL.
+// RequestUpload validates the size against the per-file limit and the sender's
+// own per-user quota, reserves a pending row, and returns the fileID + a
+// presigned PUT URL.
 func (s *Service) RequestUpload(ctx context.Context, senderID, receiverID string, size int64) (string, string, error) {
 	contact, err := s.d.Get(ctx,
 		`SELECT 1 FROM contacts WHERE user_id = ? AND contact_id = ? AND status = 'accepted'`, senderID, receiverID)
@@ -65,11 +67,11 @@ func (s *Service) RequestUpload(ctx context.Context, senderID, receiverID string
 	if size <= 0 || size > s.maxFile {
 		return "", "", ErrTooLarge
 	}
-	used, err := s.usedBytes(ctx)
+	used, err := s.usedBytesForUser(ctx, senderID)
 	if err != nil {
 		return "", "", err
 	}
-	if used+size > s.maxTotal {
+	if used+size > s.maxPerUser {
 		return "", "", ErrStorageFull
 	}
 	fileID := uuid.NewString()

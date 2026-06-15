@@ -70,13 +70,13 @@ func main() {
 		if serr != nil {
 			slog.Error("files.init.error", "err", serr)
 		} else {
-			filesSvc := files.New(d, st, cfg.MaxFileSizeBytes, cfg.MaxStorageTotalBytes)
+			filesSvc := files.New(d, st, cfg.MaxFileSizeBytes, cfg.MaxStoragePerUserBytes)
 			sio.SetFiles(filesSvc)
 			filesSvc.StartCleanup(rootCtx)
 			fileRoutes = filesSvc
 			slog.Info("files.enabled", "bucket", cfg.S3Bucket,
 				"max_file_mb", cfg.MaxFileSizeBytes/(1024*1024),
-				"max_total_gb", cfg.MaxStorageTotalBytes/(1024*1024*1024))
+				"max_per_user_gb", cfg.MaxStoragePerUserBytes/(1024*1024*1024))
 		}
 	} else {
 		slog.Info("files.disabled", "reason", "S3_BUCKET not set")
