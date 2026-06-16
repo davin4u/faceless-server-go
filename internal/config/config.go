@@ -30,6 +30,7 @@ type Config struct {
 	S3UseSSL               bool
 	MaxStoragePerUserBytes int64
 	MaxFileSizeBytes       int64
+	AvatarMaxBytes         int64
 }
 
 // Load reads .env (if present) then environment variables and returns Config.
@@ -56,6 +57,7 @@ func Load() Config {
 		S3UseSSL:               getBool("S3_USE_SSL", true),
 		MaxStoragePerUserBytes: int64(getInt("MAX_STORAGE_PER_USER_GB", 10)) * 1024 * 1024 * 1024,
 		MaxFileSizeBytes:       int64(getInt("MAX_FILE_SIZE_MB", 25)) * 1024 * 1024,
+		AvatarMaxBytes:         int64(getInt("AVATAR_MAX_SIZE_MB", 2)) * 1024 * 1024,
 	}
 }
 
