@@ -110,6 +110,18 @@ CREATE TABLE IF NOT EXISTS files (
   FOREIGN KEY (sender_id) REFERENCES users(id),
   FOREIGN KEY (receiver_id) REFERENCES users(id)
 );
+
+CREATE TABLE IF NOT EXISTS avatars (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK(kind IN ('default', 'custom')),
+  object_key TEXT NOT NULL UNIQUE,
+  size_bytes INTEGER NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'committed')),
+  created_at INTEGER NOT NULL DEFAULT (` + now + `),
+  UNIQUE(user_id, kind),
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
 `
 }
 
@@ -124,6 +136,7 @@ CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_invitation_code ON users(invitation_code);
 CREATE INDEX IF NOT EXISTS idx_files_message ON files(message_id);
 CREATE INDEX IF NOT EXISTS idx_files_status ON files(status);
+CREATE INDEX IF NOT EXISTS idx_avatars_user ON avatars(user_id);
 `
 }
 
