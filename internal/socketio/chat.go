@@ -142,6 +142,34 @@ func (s *Server) registerChatHandlers(socket *socketio.Socket) {
 			"from": userID, "isTyping": p.IsTyping,
 		})
 	})
+
+	socket.On("profile:avatar", func(args ...any) {
+		var p struct {
+			To         string `json:"to"`
+			Ciphertext string `json:"ciphertext"`
+			Nonce      string `json:"nonce"`
+		}
+		if !decodeArg(args, &p) || p.To == "" || p.Ciphertext == "" || p.Nonce == "" {
+			return
+		}
+		// Only deliver between accepted contacts (sender's direction).
+		rel, _ := s.d.Get(ctx,
+			`SELECT 1 FROM contacts WHERE user_id = ? AND contact_id = ? AND status = 'accepted'`, userID, p.To)
+		if rel == nil {
+			return
+		}
+		out := map[string]string{"from": userID, "ciphertext": p.Ciphertext, "nonce": p.Nonce}
+		if s.presence.IsUserOnline(p.To) {
+			s.presence.EmitToUserAppOnly(p.To, "profile:avatar", out)
+			slog.Info("profile.avatar.relayed", "from", userID, "to", p.To)
+		} else {
+			b, _ := json.Marshal(out)
+			_, _ = s.d.Run(ctx,
+				`INSERT INTO pending_events (id, user_id, event_type, payload, timestamp) VALUES (?, ?, 'profile:avatar', ?, ?)`,
+				uuid.NewString(), p.To, string(b), time.Now().Unix())
+			slog.Info("profile.avatar.queued", "from", userID, "to", p.To)
+		}
+	})
 }
 
 // decodeArg JSON-roundtrips args[0] into v, returning false on error.
