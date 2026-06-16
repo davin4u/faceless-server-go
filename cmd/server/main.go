@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/httprate"
 
 	"github.com/davin4u/faceless-server-go/internal/auth"
+	"github.com/davin4u/faceless-server-go/internal/avatars"
 	"github.com/davin4u/faceless-server-go/internal/config"
 	"github.com/davin4u/faceless-server-go/internal/db"
 	"github.com/davin4u/faceless-server-go/internal/files"
@@ -65,6 +66,7 @@ func main() {
 	}
 
 	var fileRoutes *files.Service
+	var avatarRoutes *avatars.Service
 	if cfg.S3Bucket != "" {
 		st, serr := storage.NewMinio(cfg.S3Endpoint, cfg.S3Region, cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3UseSSL, cfg.S3Bucket)
 		if serr != nil {
@@ -77,6 +79,10 @@ func main() {
 			slog.Info("files.enabled", "bucket", cfg.S3Bucket,
 				"max_file_mb", cfg.MaxFileSizeBytes/(1024*1024),
 				"max_per_user_gb", cfg.MaxStoragePerUserBytes/(1024*1024*1024))
+			avatarSvc := avatars.New(d, st, cfg.AvatarMaxBytes)
+			avatarSvc.StartCleanup(rootCtx)
+			avatarRoutes = avatarSvc
+			slog.Info("avatars.enabled", "max_avatar_mb", cfg.AvatarMaxBytes/(1024*1024))
 		}
 	} else {
 		slog.Info("files.disabled", "reason", "S3_BUCKET not set")
@@ -112,6 +118,12 @@ func main() {
 		r.With(httprate.LimitByIP(30, time.Minute)).
 			With(auth.RequireSignatureAuth(d)).
 			Mount("/api/files", routes.NewFiles(fileRoutes))
+	}
+
+	if avatarRoutes != nil {
+		r.With(httprate.LimitByIP(30, time.Minute)).
+			With(auth.RequireSignatureAuth(d)).
+			Mount("/api/avatar", routes.NewAvatars(avatarRoutes))
 	}
 
 	// Device token registration/removal
