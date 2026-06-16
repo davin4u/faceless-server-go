@@ -76,6 +76,93 @@ func TestRequestUpload_InsertsPendingRow(t *testing.T) {
 	}
 }
 
+// seedUserUnique seeds a user with a unique contact code derived from userID,
+// allowing multiple distinct users to coexist in the same test DB.
+func seedUserUnique(t *testing.T, d db.DB, userID string) {
+	t.Helper()
+	// Build a contact code from the first 8 characters of userID, padded if needed.
+	code := userID
+	for len(code) < 8 {
+		code += "A"
+	}
+	code = code[:4] + "-" + code[4:8]
+	_, _ = d.Run(context.Background(),
+		`INSERT INTO users (id, contact_code, display_name, public_key) VALUES (?, ?, ?, ?)`,
+		userID, code, "User-"+userID, "pk-"+userID)
+}
+
+// commit is a test helper: request-upload, simulate the S3 PUT by setting the
+// mock size, then call Commit. The user is seeded via seedUserUnique before
+// inserting the avatar row.
+func commit(t *testing.T, svc *Service, st *mockStore, d db.DB, user, kind string, size int64) string {
+	t.Helper()
+	seedUserUnique(t, d, user)
+	id, _, err := svc.RequestUpload(context.Background(), user, kind, size)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ := d.Get(context.Background(), `SELECT object_key FROM avatars WHERE id = ?`, id)
+	st.sizes[row.Str("object_key")] = size // simulate the S3 PUT
+	if err := svc.Commit(context.Background(), id, user); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func TestCommit_AndOwnerCanDownload(t *testing.T) {
+	svc, d, st := newTestService(t)
+	id := commit(t, svc, st, d, "owner", "default", 500)
+	if _, err := svc.DownloadURL(context.Background(), id, "owner"); err != nil {
+		t.Fatalf("owner download: %v", err)
+	}
+}
+
+func TestCommit_SizeMismatch(t *testing.T) {
+	svc, d, st := newTestService(t)
+	seedUserUnique(t, d, "owner")
+	avatarID, _, err := svc.RequestUpload(context.Background(), "owner", "default", 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, _ := d.Get(context.Background(), `SELECT object_key FROM avatars WHERE id = ?`, avatarID)
+	st.sizes[row.Str("object_key")] = 999 // different from declared 500
+	if err := svc.Commit(context.Background(), avatarID, "owner"); err != ErrSizeMismatch {
+		t.Fatalf("want ErrSizeMismatch, got %v", err)
+	}
+}
+
+func TestDownload_ForbiddenForStranger(t *testing.T) {
+	svc, d, st := newTestService(t)
+	id := commit(t, svc, st, d, "owner", "default", 500)
+	if _, err := svc.DownloadURL(context.Background(), id, "stranger"); err != ErrForbidden {
+		t.Fatalf("want ErrForbidden, got %v", err)
+	}
+}
+
+func TestDownload_AllowedForAcceptedContact(t *testing.T) {
+	svc, d, st := newTestService(t)
+	id := commit(t, svc, st, d, "owner", "default", 500)
+	// seed "friend" then insert the accepted contact edge owner -> friend
+	seedUserUnique(t, d, "friend")
+	_, _ = d.Run(context.Background(),
+		`INSERT INTO contacts (user_id, contact_id, status) VALUES ('owner', 'friend', 'accepted')`)
+	if _, err := svc.DownloadURL(context.Background(), id, "friend"); err != nil {
+		t.Fatalf("contact download: %v", err)
+	}
+}
+
+func TestDeleteCustom_RemovesRow(t *testing.T) {
+	svc, d, st := newTestService(t)
+	commit(t, svc, st, d, "owner", "custom", 500)
+	if err := svc.DeleteCustom(context.Background(), "owner"); err != nil {
+		t.Fatal(err)
+	}
+	row, _ := d.Get(context.Background(), `SELECT 1 FROM avatars WHERE user_id = 'owner' AND kind = 'custom'`)
+	if row != nil {
+		t.Fatal("custom avatar should be gone")
+	}
+}
+
 func TestRequestUpload_ReplacesExistingPendingRow(t *testing.T) {
 	ctx := context.Background()
 	svc, d, _ := newTestService(t)
