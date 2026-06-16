@@ -119,7 +119,6 @@ CREATE TABLE IF NOT EXISTS avatars (
   size_bytes INTEGER NOT NULL,
   status TEXT NOT NULL CHECK(status IN ('pending', 'committed')),
   created_at INTEGER NOT NULL DEFAULT (` + now + `),
-  UNIQUE(user_id, kind),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
 `

@@ -208,6 +208,49 @@ func TestCommit_ReplacesOldCommitted(t *testing.T) {
 	}
 }
 
+func TestRequestUpload_KeepsCommittedRow(t *testing.T) {
+	ctx := context.Background()
+	svc, d, st := newTestService(t)
+
+	// Commit avatar A for user "owner".
+	aID := commit(t, svc, st, d, "owner", "default", 500)
+
+	// Verify A is committed.
+	aRow, _ := d.Get(ctx, `SELECT status FROM avatars WHERE id = ?`, aID)
+	if aRow == nil || aRow.Str("status") != "committed" {
+		t.Fatalf("expected avatar A to be committed, got %v", aRow)
+	}
+
+	// Now request a new upload for the same (user, kind) — do NOT commit it.
+	_, _, err := svc.RequestUpload(ctx, "owner", "default", 300)
+	if err != nil {
+		t.Fatalf("RequestUpload failed: %v", err)
+	}
+
+	// A's committed row must still exist.
+	aRowAfter, _ := d.Get(ctx, `SELECT status FROM avatars WHERE id = ?`, aID)
+	if aRowAfter == nil {
+		t.Fatal("expected avatar A's committed row to survive RequestUpload, but it was deleted")
+	}
+	if aRowAfter.Str("status") != "committed" {
+		t.Fatalf("expected avatar A to remain committed, got status=%q", aRowAfter.Str("status"))
+	}
+
+	// There must now be both a committed row (A) and a pending row — two rows total for (owner, default).
+	countRow, _ := d.Get(ctx,
+		`SELECT COUNT(*) AS n FROM avatars WHERE user_id = 'owner' AND kind = 'default'`)
+	if countRow == nil || countRow.Int("n") != 2 {
+		t.Fatalf("expected 2 rows (committed A + pending B), got %v", countRow)
+	}
+
+	// Exactly one of those must be pending.
+	pendingRow, _ := d.Get(ctx,
+		`SELECT COUNT(*) AS n FROM avatars WHERE user_id = 'owner' AND kind = 'default' AND status = 'pending'`)
+	if pendingRow == nil || pendingRow.Int("n") != 1 {
+		t.Fatalf("expected exactly 1 pending row, got %v", pendingRow)
+	}
+}
+
 func TestRequestUpload_ReplacesExistingPendingRow(t *testing.T) {
 	ctx := context.Background()
 	svc, d, _ := newTestService(t)

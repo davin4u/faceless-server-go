@@ -155,6 +155,8 @@ func (s *Service) StartCleanup(ctx context.Context) {
 
 // RequestUpload reserves a pending avatar row for (userID, kind), replacing any
 // existing pending row of that kind, and returns the avatarID + presigned PUT URL.
+// Any committed row of the same kind is left intact so the user keeps their current
+// avatar while the new upload is in progress; Commit performs the atomic swap.
 func (s *Service) RequestUpload(ctx context.Context, userID, kind string, size int64) (string, string, error) {
 	if !validKind(kind) {
 		return "", "", ErrBadKind
@@ -162,13 +164,12 @@ func (s *Service) RequestUpload(ctx context.Context, userID, kind string, size i
 	if size <= 0 || size > s.maxBytes {
 		return "", "", ErrTooLarge
 	}
-	// Drop any prior row for this (user, kind) — pending or committed — to satisfy the
-	// UNIQUE(user_id, kind) constraint before inserting the new pending row.
-	// The S3 object is also deleted eagerly so we never accumulate orphaned objects.
+	// Drop any prior *pending* row for this (user, kind) — committed rows are left
+	// untouched so the current avatar remains visible until Commit swaps it out.
 	if old, _ := s.d.Get(ctx,
-		`SELECT object_key FROM avatars WHERE user_id = ? AND kind = ?`, userID, kind); old != nil {
+		`SELECT id, object_key FROM avatars WHERE user_id = ? AND kind = ? AND status = 'pending'`, userID, kind); old != nil {
 		_ = s.st.Delete(ctx, old.Str("object_key"))
-		_, _ = s.d.Run(ctx, `DELETE FROM avatars WHERE user_id = ? AND kind = ?`, userID, kind)
+		_, _ = s.d.Run(ctx, `DELETE FROM avatars WHERE id = ?`, old.Str("id"))
 	}
 	avatarID := uuid.NewString()
 	objectKey := uuid.NewString()
