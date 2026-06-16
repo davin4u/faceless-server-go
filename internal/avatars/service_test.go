@@ -86,8 +86,10 @@ func seedUserUnique(t *testing.T, d db.DB, userID string) {
 		code += "A"
 	}
 	code = code[:4] + "-" + code[4:8]
+	// INSERT OR IGNORE makes this idempotent — safe to call multiple times for the
+	// same userID (e.g. when the commit helper seeds before each RequestUpload call).
 	_, _ = d.Run(context.Background(),
-		`INSERT INTO users (id, contact_code, display_name, public_key) VALUES (?, ?, ?, ?)`,
+		`INSERT OR IGNORE INTO users (id, contact_code, display_name, public_key) VALUES (?, ?, ?, ?)`,
 		userID, code, "User-"+userID, "pk-"+userID)
 }
 
@@ -160,6 +162,49 @@ func TestDeleteCustom_RemovesRow(t *testing.T) {
 	row, _ := d.Get(context.Background(), `SELECT 1 FROM avatars WHERE user_id = 'owner' AND kind = 'custom'`)
 	if row != nil {
 		t.Fatal("custom avatar should be gone")
+	}
+}
+
+func TestCommit_ReplacesOldCommitted(t *testing.T) {
+	ctx := context.Background()
+	svc, d, st := newTestService(t)
+
+	// Commit avatar A for user "owner" (commit helper seeds the user via seedUserUnique).
+	aID := commit(t, svc, st, d, "owner", "default", 500)
+
+	// Capture A's object_key before B's commit deletes it from the store.
+	aRow, _ := d.Get(ctx, `SELECT object_key FROM avatars WHERE id = ?`, aID)
+	if aRow == nil {
+		t.Fatal("expected row for avatar A before second commit")
+	}
+	aObjectKey := aRow.Str("object_key")
+
+	// Commit avatar B — same user, same kind. seedUserUnique inside commit uses
+	// INSERT OR IGNORE so seeding "owner" a second time is harmless.
+	bID := commit(t, svc, st, d, "owner", "default", 500)
+
+	// A's DB row must be gone.
+	gone, _ := d.Get(ctx, `SELECT 1 FROM avatars WHERE id = ?`, aID)
+	if gone != nil {
+		t.Fatalf("expected avatar A row (%s) to be deleted after B was committed", aID)
+	}
+
+	// Exactly one committed 'default' row must remain for "owner".
+	countRow, _ := d.Get(ctx,
+		`SELECT COUNT(*) AS n FROM avatars WHERE user_id = 'owner' AND kind = 'default' AND status = 'committed'`)
+	if countRow == nil || countRow.Int("n") != 1 {
+		t.Fatalf("expected exactly 1 committed default row, got %v", countRow)
+	}
+
+	// B's row must be that one row.
+	bRow, _ := d.Get(ctx, `SELECT status FROM avatars WHERE id = ?`, bID)
+	if bRow == nil || bRow.Str("status") != "committed" {
+		t.Fatalf("expected avatar B (%s) to be committed", bID)
+	}
+
+	// A's object_key must have been removed from the mock store.
+	if _, ok := st.sizes[aObjectKey]; ok {
+		t.Fatalf("expected A's object_key %q to be deleted from the store, but it still exists", aObjectKey)
 	}
 }
 

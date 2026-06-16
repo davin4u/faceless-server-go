@@ -36,7 +36,11 @@ func New(d db.DB, st storage.Storage, maxBytes int64) *Service {
 func validKind(k string) bool { return k == "default" || k == "custom" }
 
 // Commit verifies the uploaded object size, marks the row committed, and deletes
-// any previously-committed object of the same (user, kind).
+// any previously-committed object of the same (user, kind). The two DB mutations
+// (delete old committed row + promote new row to committed) run inside a single
+// transaction so a crash cannot leave the new row stuck as pending. The best-effort
+// S3 deletion of the old object happens after the transaction commits — the DB is
+// the source of truth.
 func (s *Service) Commit(ctx context.Context, avatarID, userID string) error {
 	row, err := s.d.Get(ctx,
 		`SELECT object_key, size_bytes, kind FROM avatars WHERE id = ? AND user_id = ? AND status = 'pending'`,
@@ -55,14 +59,33 @@ func (s *Service) Commit(ctx context.Context, avatarID, userID string) error {
 		return ErrSizeMismatch
 	}
 	kind := row.Str("kind")
-	// Remove the old committed avatar of the same kind (object + row), if any.
+
+	// Look up the old committed avatar of the same kind, if any.
+	var oldID, oldObjectKey string
 	if old, _ := s.d.Get(ctx,
 		`SELECT id, object_key FROM avatars WHERE user_id = ? AND kind = ? AND status = 'committed'`, userID, kind); old != nil {
-		_ = s.st.Delete(ctx, old.Str("object_key"))
-		_, _ = s.d.Run(ctx, `DELETE FROM avatars WHERE id = ?`, old.Str("id"))
+		oldID = old.Str("id")
+		oldObjectKey = old.Str("object_key")
 	}
-	_, err = s.d.Run(ctx, `UPDATE avatars SET status = 'committed' WHERE id = ?`, avatarID)
-	return err
+
+	// Atomically delete the old committed row (if present) and promote the new row.
+	if err := s.d.Tx(ctx, func(tx db.Tx) error {
+		if oldID != "" {
+			if _, err := tx.Run(ctx, `DELETE FROM avatars WHERE id = ?`, oldID); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Run(ctx, `UPDATE avatars SET status = 'committed' WHERE id = ?`, avatarID)
+		return err
+	}); err != nil {
+		return err
+	}
+
+	// Best-effort S3 cleanup after the DB transaction has committed.
+	if oldObjectKey != "" {
+		_ = s.st.Delete(ctx, oldObjectKey)
+	}
+	return nil
 }
 
 // DownloadURL returns a presigned GET for a committed avatar, authorized only to
@@ -139,11 +162,13 @@ func (s *Service) RequestUpload(ctx context.Context, userID, kind string, size i
 	if size <= 0 || size > s.maxBytes {
 		return "", "", ErrTooLarge
 	}
-	// Drop any prior *pending* row for this (user, kind) so we never leak reservations.
+	// Drop any prior row for this (user, kind) — pending or committed — to satisfy the
+	// UNIQUE(user_id, kind) constraint before inserting the new pending row.
+	// The S3 object is also deleted eagerly so we never accumulate orphaned objects.
 	if old, _ := s.d.Get(ctx,
-		`SELECT object_key FROM avatars WHERE user_id = ? AND kind = ? AND status = 'pending'`, userID, kind); old != nil {
+		`SELECT object_key FROM avatars WHERE user_id = ? AND kind = ?`, userID, kind); old != nil {
 		_ = s.st.Delete(ctx, old.Str("object_key"))
-		_, _ = s.d.Run(ctx, `DELETE FROM avatars WHERE user_id = ? AND kind = ? AND status = 'pending'`, userID, kind)
+		_, _ = s.d.Run(ctx, `DELETE FROM avatars WHERE user_id = ? AND kind = ?`, userID, kind)
 	}
 	avatarID := uuid.NewString()
 	objectKey := uuid.NewString()
