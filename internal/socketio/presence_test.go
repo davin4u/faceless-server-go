@@ -55,6 +55,44 @@ func TestPresence_AddRemoveCountsAndOnlineCheck(t *testing.T) {
 	}
 }
 
+// A background service socket alone must make the user reachable for CALLS,
+// even though it deliberately does not count as an "app socket" (presence) and
+// does not mark the user online. Call routing gates on WaitForAnySocket so a
+// push-woken or persistent-mode device (service socket only) still gets the
+// call:offer instead of timing out at unavailable.
+func TestPresence_WaitForAnySocket(t *testing.T) {
+	d := newSqlite(t)
+	p := NewPresenceForTest(d)
+
+	// Service socket present → reachable immediately, but NOT an app socket.
+	p.AddRaw("u1", "s1", "service")
+	if !p.WaitForAnySocket(context.Background(), "u1", time.Second, nil) {
+		t.Error("WaitForAnySocket should return true when a service socket is present")
+	}
+	if p.HasAppSocket("u1") {
+		t.Error("a service socket must not count as an app socket")
+	}
+
+	// Offline user → times out (false).
+	if p.WaitForAnySocket(context.Background(), "u2", 50*time.Millisecond, nil) {
+		t.Error("WaitForAnySocket should time out for an offline user")
+	}
+
+	// abort() short-circuits the wait (e.g. caller hung up).
+	if p.WaitForAnySocket(context.Background(), "u2", time.Second, func() bool { return true }) {
+		t.Error("WaitForAnySocket should return false when abort() is true")
+	}
+
+	// A service socket that connects mid-wait is detected.
+	go func() {
+		time.Sleep(80 * time.Millisecond)
+		p.AddRaw("u3", "s9", "service")
+	}()
+	if !p.WaitForAnySocket(context.Background(), "u3", 2*time.Second, nil) {
+		t.Error("WaitForAnySocket should detect a socket that connects during the wait")
+	}
+}
+
 func TestPresence_OfflineDebounce(t *testing.T) {
 	d := newSqlite(t)
 	p := NewPresenceForTest(d)

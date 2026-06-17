@@ -20,9 +20,9 @@ type Presence struct {
 	d  db.DB
 
 	mu          sync.RWMutex
-	users       map[string]map[string]sockEntry // userID → socketID → entry
-	timers      map[string]*time.Timer          // userID → pending offline timer
-	debounce    time.Duration                   // 5s in prod
+	users       map[string]map[string]sockEntry  // userID → socketID → entry
+	timers      map[string]*time.Timer           // userID → pending offline timer
+	debounce    time.Duration                    // 5s in prod
 	broadcastFn func(userID string, online bool) // overridable for tests
 }
 
@@ -251,6 +251,34 @@ func (p *Presence) serviceSocketCount(userID string) int {
 		}
 	}
 	return n
+}
+
+// WaitForAnySocket blocks until the user has ANY live socket — a foreground app
+// socket OR a background service socket — the timeout elapses, the context is
+// cancelled, or abort() returns true (e.g. the caller disconnected). Returns
+// true only if a socket appeared. Call delivery gates on this (not on
+// WaitForAppSocket) because a push-woken or persistent-mode device only ever
+// presents a service socket, and EmitToUser delivers call:offer to it.
+func (p *Presence) WaitForAnySocket(ctx context.Context, userID string, timeout time.Duration, abort func() bool) bool {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	tick := time.NewTicker(300 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if p.IsUserOnline(userID) {
+			return true
+		}
+		if abort != nil && abort() {
+			return false
+		}
+		select {
+		case <-deadline.C:
+			return false
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+		}
+	}
 }
 
 // WaitForAppSocket blocks until the user has an app socket, the timeout
