@@ -158,6 +158,18 @@ func (s *Server) registerChatHandlers(socket *socketio.Socket) {
 		if rel == nil {
 			return
 		}
+		// Retain the latest pointer per (owner→recipient) so a recipient who
+		// reinstalls (wiping local state) gets it back via /api/contacts and
+		// /api/recover, even if the owner is offline and never re-broadcasts.
+		// Ciphertext is opaque to the server (E2E to the recipient's chat key).
+		if _, err := s.d.Run(ctx,
+			`INSERT INTO avatar_pointers (owner_id, recipient_id, ciphertext, nonce, updated_at)
+			 VALUES (?, ?, ?, ?, ?)
+			 ON CONFLICT(owner_id, recipient_id) DO UPDATE SET
+			   ciphertext = excluded.ciphertext, nonce = excluded.nonce, updated_at = excluded.updated_at`,
+			userID, p.To, p.Ciphertext, p.Nonce, time.Now().Unix()); err != nil {
+			slog.Error("profile.avatar.retain_error", "from", userID, "to", p.To, "err", err)
+		}
 		out := map[string]string{"from": userID, "ciphertext": p.Ciphertext, "nonce": p.Nonce}
 		if s.presence.IsUserOnline(p.To) {
 			s.presence.EmitToUserAppOnly(p.To, "profile:avatar", out)

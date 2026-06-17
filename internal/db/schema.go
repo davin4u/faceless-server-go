@@ -121,6 +121,17 @@ CREATE TABLE IF NOT EXISTS avatars (
   created_at INTEGER NOT NULL DEFAULT (` + now + `),
   FOREIGN KEY (user_id) REFERENCES users(id)
 );
+
+CREATE TABLE IF NOT EXISTS avatar_pointers (
+  owner_id TEXT NOT NULL,
+  recipient_id TEXT NOT NULL,
+  ciphertext TEXT NOT NULL,
+  nonce TEXT NOT NULL,
+  updated_at INTEGER NOT NULL DEFAULT (` + now + `),
+  PRIMARY KEY (owner_id, recipient_id),
+  FOREIGN KEY (owner_id) REFERENCES users(id),
+  FOREIGN KEY (recipient_id) REFERENCES users(id)
+);
 `
 }
 

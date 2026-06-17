@@ -33,12 +33,14 @@ func listContacts(d db.DB) http.HandlerFunc {
 			return
 		}
 		rows, _ := d.All(r.Context(), `
-			SELECT u.id, u.contact_code, u.display_name, u.public_key, u.chat_public_key
+			SELECT u.id, u.contact_code, u.display_name, u.public_key, u.chat_public_key,
+			       ap.ciphertext AS avatar_ciphertext, ap.nonce AS avatar_nonce
 			FROM contacts c
 			JOIN users u ON u.id = CASE WHEN c.user_id = ? THEN c.contact_id ELSE c.user_id END
+			LEFT JOIN avatar_pointers ap ON ap.owner_id = u.id AND ap.recipient_id = ?
 			WHERE (c.user_id = ? OR c.contact_id = ?) AND c.status = 'accepted'
-			GROUP BY u.id
-		`, u.ID, u.ID, u.ID)
+			GROUP BY u.id, ap.ciphertext, ap.nonce
+		`, u.ID, u.ID, u.ID, u.ID)
 		writeJSON(w, 200, map[string]any{"contacts": mapContactRows(rows)})
 	}
 }

@@ -126,6 +126,33 @@ func TestContacts_GetListReturnsAccepted(t *testing.T) {
 	if c0["displayName"] != "B" {
 		t.Errorf("c0 = %+v", c0)
 	}
+	// No retained avatar pointer yet → field absent.
+	if _, ok := c0["avatarCiphertext"]; ok {
+		t.Errorf("avatarCiphertext should be absent with no retained pointer, c0 = %+v", c0)
+	}
+}
+
+func TestContacts_GetListReturnsRetainedAvatarPointer(t *testing.T) {
+	d := newSqlite(t)
+	uA, _ := seedTwoUsers(t, d)
+	ctx := context.Background()
+	_, _ = d.Run(ctx, `INSERT INTO contacts (user_id, contact_id, status) VALUES ('uA','uB','accepted')`)
+	_, _ = d.Run(ctx, `INSERT INTO contacts (user_id, contact_id, status) VALUES ('uB','uA','accepted')`)
+	// uB (owner) has retained an avatar pointer addressed to uA (recipient).
+	_, _ = d.Run(ctx, `INSERT INTO avatar_pointers (owner_id, recipient_id, ciphertext, nonce, updated_at)
+		VALUES ('uB','uA','CIPHER','NONCE',1)`)
+
+	h := NewContacts(d, &captureNotify{})
+	rr := callWithUser(h, "GET", "/", nil, uA)
+	if rr.Code != 200 {
+		t.Fatalf("status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	c0 := resp["contacts"].([]any)[0].(map[string]any)
+	if c0["avatarCiphertext"] != "CIPHER" || c0["avatarNonce"] != "NONCE" {
+		t.Errorf("expected retained pointer in response, got c0 = %+v", c0)
+	}
 }
 
 func TestContacts_RegenerateRetiresOldCode(t *testing.T) {
