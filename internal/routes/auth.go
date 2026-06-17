@@ -183,12 +183,14 @@ func recover_(d db.DB) http.HandlerFunc {
 		}
 		uid := row.Str("id")
 		contacts, _ := d.All(ctx, `
-			SELECT u.id, u.contact_code, u.display_name, u.public_key, u.chat_public_key
+			SELECT u.id, u.contact_code, u.display_name, u.public_key, u.chat_public_key,
+			       ap.ciphertext AS avatar_ciphertext, ap.nonce AS avatar_nonce
 			FROM contacts c
 			JOIN users u ON u.id = CASE WHEN c.user_id = ? THEN c.contact_id ELSE c.user_id END
+			LEFT JOIN avatar_pointers ap ON ap.owner_id = u.id AND ap.recipient_id = ?
 			WHERE (c.user_id = ? OR c.contact_id = ?) AND c.status = 'accepted'
-			GROUP BY u.id
-		`, uid, uid, uid)
+			GROUP BY u.id, ap.ciphertext, ap.nonce
+		`, uid, uid, uid, uid)
 
 		out := map[string]any{
 			"id":                   uid,
@@ -239,13 +241,20 @@ func inviteValidate(d db.DB) http.HandlerFunc {
 func mapContactRows(rows []db.Row) []map[string]string {
 	out := make([]map[string]string, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, map[string]string{
+		m := map[string]string{
 			"id":            r.Str("id"),
 			"contactCode":   r.Str("contact_code"),
 			"displayName":   r.Str("display_name"),
 			"publicKey":     r.Str("public_key"),
 			"chatPublicKey": r.Str("chat_public_key"),
-		})
+		}
+		// Retained E2E avatar pointer (present only if the contact has shared one);
+		// lets a reinstalled client restore contact avatars without a re-broadcast.
+		if ct := r.Str("avatar_ciphertext"); ct != "" {
+			m["avatarCiphertext"] = ct
+			m["avatarNonce"] = r.Str("avatar_nonce")
+		}
+		out = append(out, m)
 	}
 	return out
 }
