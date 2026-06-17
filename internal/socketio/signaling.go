@@ -90,10 +90,14 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 		appCount := s.presence.appSocketCount(p.To)
 		serviceCount := s.presence.serviceSocketCount(p.To)
 
-		// Callee has no foreground app socket (fully offline, or only a background
-		// service socket). Wake them via FCM and hold the caller ringing until an
-		// app socket appears, bounded by the call-timeout window.
-		if !s.presence.HasAppSocket(p.To) {
+		// Callee has no live socket at all (fully offline). A background service
+		// socket is enough to deliver to: the native service rings the call via
+		// IncomingCallActivity, and EmitToUser (below) reaches service sockets.
+		// So we gate on ANY socket, not just an app socket — otherwise a
+		// push-woken or persistent-mode device (service socket only) would always
+		// time out here even though it can ring. Wake via FCM and hold the caller
+		// ringing until any socket appears, bounded by the call-timeout window.
+		if !s.presence.IsUserOnline(p.To) {
 			woke := false
 			// Only hold the caller ringing while we FCM-wake the callee if they
 			// actually have a device token (otherwise the wait is pointless).
@@ -102,7 +106,7 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 				slog.Info("signaling.call_offer.waking",
 					"from", userID, "to", p.To, "app_sockets", appCount, "service_sockets", serviceCount)
 				go s.push.SendCallWake(context.Background(), p.To, userID, p.CallType)
-				woke = s.presence.WaitForAppSocket(ctx, p.To, 25*time.Second, func() bool { return !socket.Connected() })
+				woke = s.presence.WaitForAnySocket(ctx, p.To, 25*time.Second, func() bool { return !socket.Connected() })
 			}
 			if !woke {
 				slog.Info("signaling.call_offer.unavailable",
@@ -113,8 +117,10 @@ func (s *Server) registerSignalingHandlers(socket *socketio.Socket) {
 				socket.Emit("call:unavailable", map[string]any{})
 				return
 			}
-			slog.Info("signaling.call_offer.woke", "from", userID, "to", p.To)
-			// fall through: the callee now has an app socket; forward the offer below.
+			slog.Info("signaling.call_offer.woke", "from", userID, "to", p.To,
+				"app_sockets", s.presence.appSocketCount(p.To),
+				"service_sockets", s.presence.serviceSocketCount(p.To))
+			// fall through: the callee now has a socket; forward the offer below.
 		}
 
 		// Look up caller display name
