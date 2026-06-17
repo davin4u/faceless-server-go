@@ -71,16 +71,22 @@ func (s *Server) registerChatHandlers(socket *socketio.Socket) {
 			}
 		}()
 
-		// Fan-out to recipient's online sockets (app sockets only — service
-		// sockets do not receive chat. The Node implementation routes to all
-		// sockets of a user, but only app sockets register chat handlers.)
-		s.presence.EmitToUserAppOnly(p.To, "message:receive", map[string]any{
+		// Fan-out to ALL of the recipient's sockets, including the background
+		// service socket. The native ServiceSocketManager registers a
+		// message:receive handler that posts a notification + sound, so a
+		// persistent-mode (or push-woken) device with only a service socket
+		// still gets notified. The app socket dedups (it skips the service
+		// notification when the app is foreground), and the service socket does
+		// NOT ack, so the message stays queued for the app to drain with full
+		// content later.
+		s.presence.EmitToUser(p.To, "message:receive", map[string]any{
 			"id": p.ID, "from": userID, "ciphertext": p.Ciphertext,
 			"nonce": p.Nonce, "timestamp": ts,
 		})
 
-		// Recipient has no foreground app socket → wake them via FCM. No-op
-		// if the user has no tokens (persistent-mode) or FCM is unconfigured.
+		// Recipient has no foreground app socket → wake them via FCM (push mode).
+		// No-op if the user has no tokens (persistent-mode delivers over the
+		// service socket above) or FCM is unconfigured.
 		if !s.presence.HasAppSocket(p.To) {
 			go s.push.SendMessageWake(context.Background(), p.To, userID)
 		}
