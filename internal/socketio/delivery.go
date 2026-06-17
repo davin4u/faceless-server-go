@@ -8,6 +8,34 @@ import (
 	socketio "github.com/zishang520/socket.io/v2/socket"
 )
 
+// deliverMessagesToService emits undelivered messages to a freshly-connected
+// background service socket so the native client can post a notification +
+// sound. Unlike deliverPending it does NOT drain/delete pending_events (those
+// belong to the app socket) and does NOT delete messages — they stay
+// delivered=0 until the app socket connects, acks, and shows full content.
+func (s *Server) deliverMessagesToService(socket *socketio.Socket, userID string) {
+	ctx := context.Background()
+	rows, err := s.d.All(ctx,
+		`SELECT id, sender_id, ciphertext, nonce, timestamp FROM messages WHERE receiver_id = ? AND delivered = 0 ORDER BY timestamp ASC`,
+		userID)
+	if err != nil {
+		slog.Error("delivery.service_messages.error", "user_id", userID, "err", err)
+		return
+	}
+	for _, r := range rows {
+		socket.Emit("message:receive", map[string]any{
+			"id":         r.Str("id"),
+			"from":       r.Str("sender_id"),
+			"ciphertext": r.Str("ciphertext"),
+			"nonce":      r.Str("nonce"),
+			"timestamp":  r.Int("timestamp"),
+		})
+	}
+	if len(rows) > 0 {
+		slog.Info("delivery.service_messages.drained", "user_id", userID, "count", len(rows))
+	}
+}
+
 func (s *Server) deliverPending(socket *socketio.Socket, userID string) {
 	ctx := context.Background()
 

@@ -173,6 +173,11 @@ func (s *Server) onConnect(args ...any) {
 	if socketType != "service" {
 		s.registerChatHandlers(socket)
 		go s.deliverPending(socket, userID)
+	} else {
+		// Service sockets (background/push-woken) get undelivered messages so the
+		// native client can post a notification + sound. They must NOT consume
+		// pending_events or delete/ack messages — that's the app socket's job.
+		go s.deliverMessagesToService(socket, userID)
 	}
 
 	socket.On("disconnect", func(args ...any) { //nolint:errcheck
